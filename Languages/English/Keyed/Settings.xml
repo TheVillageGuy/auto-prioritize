@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LanguageData>
+    <AutoPriority>Let Me Skill For You</AutoPriority>
+    <AutoPriority.NumPawns>Number of Pawns to assign:</AutoPriority.NumPawns>
+    <AutoPriority.Priority>Priority to use:</AutoPriority.Priority>
+    <AutoPriority.WorkSettings.Label>Settings by Work Type</AutoPriority.WorkSettings.Label>
+    <AutoPriority.NeedGame>Need to be in a game to access settings, since they are on a per-game basis</AutoPriority.NeedGame>
+</LanguageData>
