@@ -5,4 +5,52 @@
     <AutoPriority.Priority>Priority to use:</AutoPriority.Priority>
     <AutoPriority.WorkSettings.Label>Settings by Work Type</AutoPriority.WorkSettings.Label>
     <AutoPriority.NeedGame>Need to be in a game to access settings, since they are on a per-game basis</AutoPriority.NeedGame>
+    <AutoPriority.NoWorkTypes>No visible work types were loaded.</AutoPriority.NoWorkTypes>
+    <AutoPriority.AutomationEnabled>Run automatic work assignment</AutoPriority.AutomationEnabled>
+    <AutoPriority.Interval>Recalculates every {0}</AutoPriority.Interval>
+    <AutoPriority.ApplyNow>Apply now</AutoPriority.ApplyNow>
+    <AutoPriority.ManageWorkType>Manage this work type</AutoPriority.ManageWorkType>
+    <AutoPriority.ManageWorkType.Desc>When enabled, this mod controls this work type for every eligible colonist on each map. Other work types are left untouched.</AutoPriority.ManageWorkType.Desc>
+    <AutoPriority.NumPawns.Value>Base colonists assigned: {0}</AutoPriority.NumPawns.Value>
+    <AutoPriority.NumPawns.Desc>The normal number of top-ranked colonists assigned to this work type. Circumstances can temporarily add more.</AutoPriority.NumPawns.Desc>
+    <AutoPriority.RankPriorities>Priority for each ranked colonist</AutoPriority.RankPriorities>
+    <AutoPriority.RankPriorities.Desc>The best candidate is colonist #1. Priority 1 is highest and priority 4 is lowest.</AutoPriority.RankPriorities.Desc>
+    <AutoPriority.PriorityForRank>Colonist #{0}: priority {1}</AutoPriority.PriorityForRank>
+    <AutoPriority.CalculationFactors>Calculation factors</AutoPriority.CalculationFactors>
+    <AutoPriority.CalculationFactors.Desc>Every eligible colonist is compared on these final in-game values. Final stats already include skills, health capacities, genes, equipment, and other modifiers.</AutoPriority.CalculationFactors.Desc>
+    <AutoPriority.Factor.RelevantSkill>Relevant skill level</AutoPriority.Factor.RelevantSkill>
+    <AutoPriority.Factor.Passion>Relevant passion</AutoPriority.Factor.Passion>
+    <AutoPriority.LowerIsBetter> (lower is better)</AutoPriority.LowerIsBetter>
+    <AutoPriority.Circumstances>Circumstance boosts</AutoPriority.Circumstances>
+    <AutoPriority.Circumstances.Desc>An active rule temporarily adds workers and raises their priority. If several rules are active, the strongest boost is used.</AutoPriority.Circumstances.Desc>
+    <AutoPriority.Active>active ({0})</AutoPriority.Active>
+    <AutoPriority.Inactive>inactive</AutoPriority.Inactive>
+    <AutoPriority.ExtraWorkers>Additional colonists: {0}</AutoPriority.ExtraWorkers>
+    <AutoPriority.PriorityBoost>Raise priority by: {0}</AutoPriority.PriorityBoost>
+    <AutoPriority.CurrentRanking>Current map ranking (score out of 100)</AutoPriority.CurrentRanking>
+    <AutoPriority.NoRanking>Apply the settings to calculate a current ranking.</AutoPriority.NoRanking>
+    <AutoPriority.ResetWorkType>Reset this work type</AutoPriority.ResetWorkType>
+
+    <AutoPriority.Circumstance.Medical>Patients need treatment</AutoPriority.Circumstance.Medical>
+    <AutoPriority.Circumstance.Medical.Desc>Active while a colonist or colony prisoner has a condition needing treatment.</AutoPriority.Circumstance.Medical.Desc>
+    <AutoPriority.Circumstance.Fire>Fire on the map</AutoPriority.Circumstance.Fire>
+    <AutoPriority.Circumstance.Fire.Desc>Active while at least one fire exists on the map.</AutoPriority.Circumstance.Fire.Desc>
+    <AutoPriority.Circumstance.Food>Food shortage</AutoPriority.Circumstance.Food>
+    <AutoPriority.Circumstance.Food.Desc>Active when stored human-edible nutrition is below roughly two days per colonist.</AutoPriority.Circumstance.Food.Desc>
+    <AutoPriority.Circumstance.Medicine>Low medicine</AutoPriority.Circumstance.Medicine>
+    <AutoPriority.Circumstance.Medicine.Desc>Active when fewer than one unit of medicine per colonist is available.</AutoPriority.Circumstance.Medicine.Desc>
+    <AutoPriority.Circumstance.Prisoners>Prisoners present</AutoPriority.Circumstance.Prisoners>
+    <AutoPriority.Circumstance.Prisoners.Desc>Active while the map contains colony prisoners.</AutoPriority.Circumstance.Prisoners.Desc>
+    <AutoPriority.Circumstance.Construction>Construction backlog</AutoPriority.Circumstance.Construction>
+    <AutoPriority.Circumstance.Construction.Desc>Active when at least five blueprints or unfinished frames exist.</AutoPriority.Circumstance.Construction.Desc>
+    <AutoPriority.Circumstance.Hauling>Hauling backlog</AutoPriority.Circumstance.Hauling>
+    <AutoPriority.Circumstance.Hauling.Desc>Active when at least ten things have been manually designated for hauling.</AutoPriority.Circumstance.Hauling.Desc>
+    <AutoPriority.Circumstance.Cleaning>Cleaning backlog</AutoPriority.Circumstance.Cleaning>
+    <AutoPriority.Circumstance.Cleaning.Desc>Active when at least fifty pieces of filth exist on the map.</AutoPriority.Circumstance.Cleaning.Desc>
+    <AutoPriority.Circumstance.Plants>Plant work backlog</AutoPriority.Circumstance.Plants>
+    <AutoPriority.Circumstance.Plants.Desc>Active when at least ten plants are designated for cutting or harvesting.</AutoPriority.Circumstance.Plants.Desc>
+    <AutoPriority.Circumstance.Animals>Animal work pending</AutoPriority.Circumstance.Animals>
+    <AutoPriority.Circumstance.Animals.Desc>Active while animals are designated for taming or slaughter.</AutoPriority.Circumstance.Animals.Desc>
+    <AutoPriority.Circumstance.Hunting>Hunting backlog</AutoPriority.Circumstance.Hunting>
+    <AutoPriority.Circumstance.Hunting.Desc>Active when at least three animals are designated for hunting.</AutoPriority.Circumstance.Hunting.Desc>
 </LanguageData>
