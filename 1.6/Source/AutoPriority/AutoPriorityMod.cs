@@ -383,9 +383,7 @@ namespace AutoPriority
             int maximumPriority = PriorityCompatibility.MaximumPriority;
             listing.Label("AutoPriority.RankGroups.Desc".Translate(maximumPriority));
             int eligibleColonists = EligibleColonistCount(Find.CurrentMap, workType);
-            int countMaximum = Math.Max(
-                1,
-                Math.Max(eligibleColonists, Math.Max(profile.RankGroupCounts[0], profile.RankGroupCounts[1])));
+            int countMaximum = Math.Max(50, eligibleColonists + 10);
             for (int index = 0; index < 2; index++)
             {
                 int count = Mathf.RoundToInt(listing.SliderLabeled(
