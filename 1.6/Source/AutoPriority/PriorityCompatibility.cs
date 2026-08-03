@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using RimWorld;
 using Verse;
+using Verse.AI;
 
 namespace AutoPriority
 {
@@ -21,6 +22,17 @@ namespace AutoPriority
         private static readonly ScheduledPriorityGetter WorkTabGetter;
         private static readonly MaximumPriorityGetter WorkTabMaximumPriority;
         private static readonly FieldInfo WorkTabMaximumPriorityField;
+        private static readonly FieldInfo VanillaPrioritiesField = typeof(Pawn_WorkSettings).GetField(
+            "priorities", BindingFlags.Instance | BindingFlags.NonPublic);
+        private static readonly FieldInfo VanillaWorkGiversDirtyField = typeof(Pawn_WorkSettings).GetField(
+            "workGiversDirty", BindingFlags.Instance | BindingFlags.NonPublic);
+        private static readonly HashSet<Pawn> BatchedChangedPawns = new HashSet<Pawn>();
+        private static readonly Dictionary<Pawn, DefMap<WorkTypeDef, int>> BatchedPriorityMaps =
+            new Dictionary<Pawn, DefMap<WorkTypeDef, int>>();
+        private static readonly Dictionary<Pawn, HashSet<WorkTypeDef>> BatchedDisabledWorkTypes =
+            new Dictionary<Pawn, HashSet<WorkTypeDef>>();
+        private static readonly List<HashSet<WorkTypeDef>> DisabledSetPool = new List<HashSet<WorkTypeDef>>();
+        private static bool batchActive;
 
         static PriorityCompatibility()
         {
@@ -87,6 +99,13 @@ namespace AutoPriority
 
         public static void SetPriorityIfChanged(Pawn pawn, WorkTypeDef workType, int priority)
         {
+            if (batchActive && WorkTabSetter == null && VanillaPrioritiesField != null &&
+                VanillaWorkGiversDirtyField != null)
+            {
+                SetVanillaPriorityBatched(pawn, workType, priority);
+                return;
+            }
+
             int current = WorkTabGetter != null
                 ? WorkTabGetter(pawn, workType, -1)
                 : pawn.workSettings.GetPriority(workType);
@@ -103,6 +122,114 @@ namespace AutoPriority
             else
             {
                 pawn.workSettings.SetPriority(workType, priority);
+            }
+        }
+
+        public static void BeginBatch()
+        {
+            batchActive = true;
+            BatchedChangedPawns.Clear();
+            BatchedPriorityMaps.Clear();
+            foreach (HashSet<WorkTypeDef> disabled in BatchedDisabledWorkTypes.Values)
+            {
+                disabled.Clear();
+                DisabledSetPool.Add(disabled);
+            }
+
+            BatchedDisabledWorkTypes.Clear();
+        }
+
+        public static void EndBatch()
+        {
+            if (!batchActive)
+            {
+                return;
+            }
+
+            batchActive = false;
+            foreach (Pawn pawn in BatchedChangedPawns)
+            {
+                if (pawn == null || pawn.workSettings == null)
+                {
+                    continue;
+                }
+
+                VanillaWorkGiversDirtyField.SetValue(pawn.workSettings, true);
+                HashSet<WorkTypeDef> disabled;
+                if (pawn.jobs == null || !BatchedDisabledWorkTypes.TryGetValue(pawn, out disabled) || disabled.Count == 0)
+                {
+                    continue;
+                }
+
+                // Pawn_WorkSettings.SetPriority scans the job queue every time a
+                // work type is set to zero. Scan it once for the whole batch.
+                pawn.jobs.jobQueue.RemoveAll(pawn, job =>
+                    job != null && !job.playerForced && job.workGiverDef != null &&
+                    disabled.Contains(job.workGiverDef.workType));
+
+                Job currentJob = pawn.jobs.curJob;
+                if (currentJob != null && !currentJob.playerForced && currentJob.workGiverDef != null &&
+                    disabled.Contains(currentJob.workGiverDef.workType))
+                {
+                    pawn.jobs.EndCurrentJob(JobCondition.InterruptForced);
+                }
+            }
+
+            BatchedChangedPawns.Clear();
+            BatchedPriorityMaps.Clear();
+            foreach (HashSet<WorkTypeDef> disabled in BatchedDisabledWorkTypes.Values)
+            {
+                disabled.Clear();
+                DisabledSetPool.Add(disabled);
+            }
+
+            BatchedDisabledWorkTypes.Clear();
+        }
+
+        private static void SetVanillaPriorityBatched(Pawn pawn, WorkTypeDef workType, int priority)
+        {
+            DefMap<WorkTypeDef, int> priorities;
+            if (!BatchedPriorityMaps.TryGetValue(pawn, out priorities))
+            {
+                priorities = VanillaPrioritiesField.GetValue(pawn.workSettings) as DefMap<WorkTypeDef, int>;
+                if (priorities != null)
+                {
+                    BatchedPriorityMaps.Add(pawn, priorities);
+                }
+            }
+
+            if (priorities == null || priorities[workType] == priority)
+            {
+                return;
+            }
+
+            priorities[workType] = priority;
+            BatchedChangedPawns.Add(pawn);
+
+            HashSet<WorkTypeDef> disabled;
+            if (!BatchedDisabledWorkTypes.TryGetValue(pawn, out disabled))
+            {
+                int last = DisabledSetPool.Count - 1;
+                if (last >= 0)
+                {
+                    disabled = DisabledSetPool[last];
+                    DisabledSetPool.RemoveAt(last);
+                }
+                else
+                {
+                    disabled = new HashSet<WorkTypeDef>();
+                }
+
+                BatchedDisabledWorkTypes.Add(pawn, disabled);
+            }
+
+            if (priority == 0)
+            {
+                disabled.Add(workType);
+            }
+            else
+            {
+                disabled.Remove(workType);
             }
         }
 

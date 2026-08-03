@@ -422,18 +422,26 @@ namespace AutoPriority
             }
 
             EnsureManualPrioritiesEnabled();
-            List<Map> maps = Find.Maps;
-            for (int index = 0; index < maps.Count; index++)
+            PriorityCompatibility.BeginBatch();
+            try
             {
-                Map map = maps[index];
-                try
+                List<Map> maps = Find.Maps;
+                for (int index = 0; index < maps.Count; index++)
                 {
-                    RecalculateMap(map);
+                    Map map = maps[index];
+                    try
+                    {
+                        RecalculateMap(map);
+                    }
+                    catch (Exception exception)
+                    {
+                        Log.Error("[Let Me Skill For You] Failed to calculate work priorities on " + map + ": " + exception);
+                    }
                 }
-                catch (Exception exception)
-                {
-                    Log.Error("[Let Me Skill For You] Failed to calculate work priorities on " + map + ": " + exception);
-                }
+            }
+            finally
+            {
+                PriorityCompatibility.EndBatch();
             }
         }
 
