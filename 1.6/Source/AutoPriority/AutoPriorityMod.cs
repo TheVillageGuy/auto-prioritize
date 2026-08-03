@@ -53,7 +53,7 @@ namespace AutoPriority
             Rect navigation = new Rect(body.x, body.y, NavigationWidth, body.height);
             Rect detail = new Rect(navigation.xMax + 10f, body.y, body.width - NavigationWidth - 10f, body.height);
 
-            DrawNavigation(navigation, workTypes);
+            changed |= DrawNavigation(navigation, settings, workTypes);
             WorkTypeDef selected = workTypes.First(workType => workType.defName == selectedWorkTypeDefName);
             changed |= DrawProfile(detail, settings, selected);
 
@@ -149,8 +149,9 @@ namespace AutoPriority
             return bestIndex;
         }
 
-        private void DrawNavigation(Rect rect, List<WorkTypeDef> workTypes)
+        private bool DrawNavigation(Rect rect, AutoPrioritySettings settings, List<WorkTypeDef> workTypes)
         {
+            bool changed = false;
             Widgets.DrawMenuSection(rect);
             Rect outRect = rect.ContractedBy(2f);
             Rect viewRect = new Rect(0f, 0f, outRect.width - 18f, workTypes.Count * 34f + 4f);
@@ -168,18 +169,31 @@ namespace AutoPriority
                     Widgets.DrawHighlight(row);
                 }
 
-                Rect labelRect = row.ContractedBy(7f, 4f);
+                WorkTypeSettings profile = settings.ProfileFor(workType);
+                Rect checkboxRect = new Rect(row.xMax - 29f, row.y + 5f, 24f, 24f);
+                bool managed = profile.Enabled;
+                Widgets.Checkbox(checkboxRect.position, ref managed, 24f);
+                TooltipHandler.TipRegion(checkboxRect, "AutoPriority.ManageWorkType.Desc".Translate());
+                if (managed != profile.Enabled)
+                {
+                    profile.Enabled = managed;
+                    changed = true;
+                }
+
+                Rect labelRect = new Rect(row.x + 7f, row.y + 4f, row.width - 43f, row.height - 8f);
                 Widgets.Label(labelRect, workType.pawnLabel.NullOrEmpty() ? workType.labelShort.CapitalizeFirst() : workType.pawnLabel);
-                if (Widgets.ButtonInvisible(row))
+                Rect selectRect = new Rect(row.x, row.y, row.width - 34f, row.height);
+                if (Widgets.ButtonInvisible(selectRect))
                 {
                     selectedWorkTypeDefName = workType.defName;
                     detailScroll = Vector2.zero;
                 }
 
-                TooltipHandler.TipRegion(row, workType.description);
+                TooltipHandler.TipRegion(selectRect, workType.description);
             }
 
             Widgets.EndScrollView();
+            return changed;
         }
 
         private bool DrawProfile(Rect rect, AutoPrioritySettings settings, WorkTypeDef workType)
