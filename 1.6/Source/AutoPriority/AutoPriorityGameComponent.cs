@@ -8,6 +8,8 @@ namespace AutoPriority
 {
     public sealed class WorkTypeSettings : IExposable
     {
+        public const int MaximumConfiguredWorkers = 999;
+
         public string WorkTypeDefName;
         public bool Enabled;
         public int WorkerCount = 1;
@@ -69,7 +71,7 @@ namespace AutoPriority
 
             for (int index = 0; index < 2; index++)
             {
-                RankGroupCounts[index] = Math.Max(0, Math.Min(20, RankGroupCounts[index]));
+                RankGroupCounts[index] = Math.Max(0, Math.Min(MaximumConfiguredWorkers, RankGroupCounts[index]));
                 RankPriorities[index] = Math.Max(0, Math.Min(PriorityCompatibility.MaximumPriority, RankPriorities[index]));
             }
 

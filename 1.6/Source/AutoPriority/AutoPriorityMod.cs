@@ -328,7 +328,7 @@ namespace AutoPriority
             Widgets.DrawMenuSection(rect);
             WorkTypeSettings profile = settings.ProfileFor(workType);
             profile.EnsureValid();
-            float contentHeight = 620f + profile.CircumstanceRules.Count * 104f;
+            float contentHeight = 665f + profile.CircumstanceRules.Count * 104f;
             IReadOnlyList<ScoredPawn> ranking = Find.CurrentMap == null
                 ? new List<ScoredPawn>()
                 : settings.RankingFor(Find.CurrentMap, workType);
@@ -362,11 +362,15 @@ namespace AutoPriority
             listing.Label("AutoPriority.RankGroups".Translate());
             int maximumPriority = PriorityCompatibility.MaximumPriority;
             listing.Label("AutoPriority.RankGroups.Desc".Translate(maximumPriority));
+            int eligibleColonists = EligibleColonistCount(Find.CurrentMap, workType);
+            int countMaximum = Math.Max(
+                1,
+                Math.Max(eligibleColonists, Math.Max(profile.RankGroupCounts[0], profile.RankGroupCounts[1])));
             for (int index = 0; index < 2; index++)
             {
                 int count = Mathf.RoundToInt(listing.SliderLabeled(
                     "AutoPriority.RankGroup.Count".Translate(index + 1, profile.RankGroupCounts[index]),
-                    profile.RankGroupCounts[index], 0f, 20f));
+                    profile.RankGroupCounts[index], 0f, countMaximum));
                 int priority = Mathf.RoundToInt(listing.SliderLabeled(
                     "AutoPriority.RankGroup.Priority".Translate(index + 1, profile.RankPriorities[index]),
                     profile.RankPriorities[index], 0f, maximumPriority));
@@ -377,6 +381,17 @@ namespace AutoPriority
                     profile.EnsureRankPriorities();
                     changed = true;
                 }
+            }
+
+            int requestedColonists = profile.RankGroupCounts[0] + profile.RankGroupCounts[1];
+            listing.Label("AutoPriority.RankGroups.Availability".Translate(eligibleColonists, requestedColonists));
+            if (requestedColonists > eligibleColonists)
+            {
+                int availableForSecondGroup = Math.Max(0, eligibleColonists - profile.RankGroupCounts[0]);
+                Color previousColor = GUI.color;
+                GUI.color = Color.yellow;
+                listing.Label("AutoPriority.RankGroups.Shortage".Translate(availableForSecondGroup));
+                GUI.color = previousColor;
             }
 
             listing.GapLine();
@@ -457,6 +472,28 @@ namespace AutoPriority
             listing.End();
             Widgets.EndScrollView();
             return changed;
+        }
+
+        private static int EligibleColonistCount(Map map, WorkTypeDef workType)
+        {
+            if (map == null)
+            {
+                return 0;
+            }
+
+            List<Pawn> colonists = map.mapPawns.FreeColonistsSpawned;
+            int count = 0;
+            for (int index = 0; index < colonists.Count; index++)
+            {
+                Pawn pawn = colonists[index];
+                if (pawn != null && !pawn.Dead && !pawn.Downed && !pawn.InMentalState &&
+                    pawn.workSettings != null && pawn.workSettings.Initialized && !pawn.WorkTypeIsDisabled(workType))
+                {
+                    count++;
+                }
+            }
+
+            return count;
         }
     }
 }
