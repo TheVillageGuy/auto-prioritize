@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using RimWorld;
 using Verse;
 
@@ -105,14 +104,37 @@ namespace AutoPriority
                 enabledTypes = new CircumstanceType[0];
             }
 
-            return All.Select(info => new CircumstanceRule(info.Type, enabledTypes.Contains(info.Type))).ToList();
+            var rules = new List<CircumstanceRule>(All.Count);
+            for (int infoIndex = 0; infoIndex < All.Count; infoIndex++)
+            {
+                CircumstanceInfo info = All[infoIndex];
+                bool enabled = false;
+                for (int typeIndex = 0; typeIndex < enabledTypes.Length; typeIndex++)
+                {
+                    if (enabledTypes[typeIndex] == info.Type)
+                    {
+                        enabled = true;
+                        break;
+                    }
+                }
+
+                rules.Add(new CircumstanceRule(info.Type, enabled));
+            }
+
+            return rules;
         }
 
         public static void EnsureAllRules(List<CircumstanceRule> rules)
         {
+            var existing = new HashSet<CircumstanceType>();
+            for (int ruleIndex = 0; ruleIndex < rules.Count; ruleIndex++)
+            {
+                existing.Add(rules[ruleIndex].Type);
+            }
+
             foreach (CircumstanceInfo info in All)
             {
-                if (rules.All(rule => rule.Type != info.Type))
+                if (!existing.Contains(info.Type))
                 {
                     rules.Add(new CircumstanceRule(info.Type, false));
                 }
@@ -149,8 +171,8 @@ namespace AutoPriority
 
             if (Needs(requested, CircumstanceType.MedicalEmergency))
             {
-                int patients = colonists.Count(pawn => pawn.health != null && pawn.health.HasHediffsNeedingTendByPlayer());
-                patients += map.mapPawns.PrisonersOfColonySpawned.Count(pawn => pawn.health != null && pawn.health.HasHediffsNeedingTendByPlayer());
+                int patients = CountPatientsNeedingTend(colonists);
+                patients += CountPatientsNeedingTend(map.mapPawns.PrisonersOfColonySpawned);
                 snapshot.counts[CircumstanceType.MedicalEmergency] = patients;
             }
 
@@ -172,35 +194,37 @@ namespace AutoPriority
             bool needsMedicine = Needs(requested, CircumstanceType.LowMedicine);
             bool needsConstruction = Needs(requested, CircumstanceType.ConstructionBacklog);
             bool needsFilth = Needs(requested, CircumstanceType.CleaningBacklog);
-            if (needsFood || needsMedicine || needsConstruction || needsFilth)
+            if (needsFood)
             {
-                foreach (Thing thing in map.listerThings.AllThings)
+                List<Thing> food = map.listerThings.ThingsInGroup(ThingRequestGroup.FoodSource);
+                for (int index = 0; index < food.Count; index++)
                 {
-                    if (thing.Destroyed)
-                    {
-                        continue;
-                    }
-
-                    if (needsFood && thing.def.IsNutritionGivingIngestible && thing.def.ingestible.HumanEdible && !thing.def.IsDrug && !(thing is Corpse))
+                    Thing thing = food[index];
+                    if (!thing.Destroyed && thing.def.IsNutritionGivingIngestible &&
+                        thing.def.ingestible.HumanEdible && !thing.def.IsDrug && !(thing is Corpse))
                     {
                         availableNutrition += thing.GetStatValue(StatDefOf.Nutrition) * thing.stackCount;
                     }
-
-                    if (needsMedicine && thing.def.IsMedicine)
-                    {
-                        medicine += thing.stackCount;
-                    }
-
-                    if (needsConstruction && (thing is Blueprint || thing is Frame))
-                    {
-                        construction++;
-                    }
-
-                    if (needsFilth && thing is Filth)
-                    {
-                        filth++;
-                    }
                 }
+            }
+
+            if (needsMedicine)
+            {
+                List<Thing> medicines = map.listerThings.ThingsInGroup(ThingRequestGroup.Medicine);
+                for (int index = 0; index < medicines.Count; index++)
+                {
+                    medicine += medicines[index].stackCount;
+                }
+            }
+
+            if (needsConstruction)
+            {
+                construction = map.listerThings.ThingsInGroup(ThingRequestGroup.Construction).Count;
+            }
+
+            if (needsFilth)
+            {
+                filth = map.listerThings.ThingsInGroup(ThingRequestGroup.Filth).Count;
             }
 
             // Roughly two days of food. The value intentionally ignores future crops.
@@ -262,7 +286,33 @@ namespace AutoPriority
 
         private static int CountDesignations(Map map, DesignationDef def)
         {
-            return def == null ? 0 : map.designationManager.SpawnedDesignationsOfDef(def).Count();
+            if (def == null)
+            {
+                return 0;
+            }
+
+            int count = 0;
+            foreach (Designation designation in map.designationManager.SpawnedDesignationsOfDef(def))
+            {
+                count++;
+            }
+
+            return count;
+        }
+
+        private static int CountPatientsNeedingTend(List<Pawn> pawns)
+        {
+            int count = 0;
+            for (int index = 0; index < pawns.Count; index++)
+            {
+                Pawn pawn = pawns[index];
+                if (pawn.health != null && pawn.health.HasHediffsNeedingTendByPlayer())
+                {
+                    count++;
+                }
+            }
+
+            return count;
         }
     }
 }

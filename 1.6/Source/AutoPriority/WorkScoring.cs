@@ -66,7 +66,7 @@ namespace AutoPriority
         }
     }
 
-    public sealed class ScoredPawn
+    public struct ScoredPawn
     {
         public readonly Pawn Pawn;
         public readonly float Score;
@@ -79,13 +79,29 @@ namespace AutoPriority
     }
 
     /// <summary>
-    /// Short-lived cache shared by every work type in one update pass. It prevents
-    /// common stats such as MoveSpeed and WorkSpeedGlobal from being recalculated
-    /// repeatedly, but is deliberately discarded after the pass so health,
-    /// equipment, genes and hediff changes are observed on the next update.
+    /// Cache shared by every work type in one update pass. Values are cleared
+    /// between passes so health, equipment, gene and hediff changes are observed,
+    /// while the dictionaries and numeric buffers retain capacity to avoid churn.
     /// </summary>
     public sealed class WorkScoreCache
     {
+        private sealed class PawnValues
+        {
+            public readonly Dictionary<StatDef, CachedStatValue> Stats =
+                new Dictionary<StatDef, CachedStatValue>();
+            public readonly Dictionary<WorkTypeDef, float> Skills =
+                new Dictionary<WorkTypeDef, float>();
+            public readonly Dictionary<WorkTypeDef, float> Passions =
+                new Dictionary<WorkTypeDef, float>();
+
+            public void Clear()
+            {
+                Stats.Clear();
+                Skills.Clear();
+                Passions.Clear();
+            }
+        }
+
         private struct CachedStatValue
         {
             public readonly float Value;
@@ -98,21 +114,26 @@ namespace AutoPriority
             }
         }
 
-        private readonly Dictionary<Pawn, Dictionary<StatDef, CachedStatValue>> statValues =
-            new Dictionary<Pawn, Dictionary<StatDef, CachedStatValue>>();
-        private readonly Dictionary<Pawn, Dictionary<WorkTypeDef, float>> skillValues =
-            new Dictionary<Pawn, Dictionary<WorkTypeDef, float>>();
-        private readonly Dictionary<Pawn, Dictionary<WorkTypeDef, float>> passionValues =
-            new Dictionary<Pawn, Dictionary<WorkTypeDef, float>>();
+        private readonly Dictionary<Pawn, PawnValues> pawnValues = new Dictionary<Pawn, PawnValues>();
+        private readonly List<PawnValues> pooledPawnValues = new List<PawnValues>();
+        private float[] rawValues = new float[0];
+        private float[] minimums = new float[0];
+        private float[] maximums = new float[0];
+
+        public void BeginPass()
+        {
+            foreach (PawnValues values in pawnValues.Values)
+            {
+                values.Clear();
+                pooledPawnValues.Add(values);
+            }
+
+            pawnValues.Clear();
+        }
 
         public float StatValue(Pawn pawn, StatDef stat, bool lowerIsBetter)
         {
-            Dictionary<StatDef, CachedStatValue> values;
-            if (!statValues.TryGetValue(pawn, out values))
-            {
-                values = new Dictionary<StatDef, CachedStatValue>();
-                statValues.Add(pawn, values);
-            }
+            Dictionary<StatDef, CachedStatValue> values = ValuesFor(pawn).Stats;
 
             CachedStatValue cached;
             if (!values.TryGetValue(stat, out cached))
@@ -135,7 +156,7 @@ namespace AutoPriority
 
         public float SkillValue(Pawn pawn, WorkTypeDef workType)
         {
-            Dictionary<WorkTypeDef, float> values = WorkValues(skillValues, pawn);
+            Dictionary<WorkTypeDef, float> values = ValuesFor(pawn).Skills;
             float value;
             if (!values.TryGetValue(workType, out value))
             {
@@ -148,7 +169,7 @@ namespace AutoPriority
 
         public float PassionValue(Pawn pawn, WorkTypeDef workType)
         {
-            Dictionary<WorkTypeDef, float> values = WorkValues(passionValues, pawn);
+            Dictionary<WorkTypeDef, float> values = ValuesFor(pawn).Passions;
             float value;
             if (!values.TryGetValue(workType, out value))
             {
@@ -159,18 +180,57 @@ namespace AutoPriority
             return value;
         }
 
-        private static Dictionary<WorkTypeDef, float> WorkValues(
-            Dictionary<Pawn, Dictionary<WorkTypeDef, float>> cache,
-            Pawn pawn)
+        public void GetBuffers(int rawCount, int factorCount, out float[] raw, out float[] mins, out float[] maxes)
         {
-            Dictionary<WorkTypeDef, float> values;
-            if (!cache.TryGetValue(pawn, out values))
+            if (rawValues.Length < rawCount)
             {
-                values = new Dictionary<WorkTypeDef, float>();
-                cache.Add(pawn, values);
+                rawValues = new float[NextPowerOfTwo(rawCount)];
             }
 
+            if (minimums.Length < factorCount)
+            {
+                int capacity = NextPowerOfTwo(factorCount);
+                minimums = new float[capacity];
+                maximums = new float[capacity];
+            }
+
+            raw = rawValues;
+            mins = minimums;
+            maxes = maximums;
+        }
+
+        private PawnValues ValuesFor(Pawn pawn)
+        {
+            PawnValues values;
+            if (pawnValues.TryGetValue(pawn, out values))
+            {
+                return values;
+            }
+
+            int last = pooledPawnValues.Count - 1;
+            if (last >= 0)
+            {
+                values = pooledPawnValues[last];
+                pooledPawnValues.RemoveAt(last);
+            }
+            else
+            {
+                values = new PawnValues();
+            }
+
+            pawnValues.Add(pawn, values);
             return values;
+        }
+
+        private static int NextPowerOfTwo(int value)
+        {
+            int result = 4;
+            while (result < value)
+            {
+                result *= 2;
+            }
+
+            return result;
         }
     }
 
@@ -231,53 +291,68 @@ namespace AutoPriority
             return resolved;
         }
 
-        public static List<ScoredPawn> Rank(WorkTypeDef workType, List<Pawn> pawns, WorkScoreCache cache)
+        public static void Rank(
+            WorkTypeDef workType,
+            List<Pawn> pawns,
+            WorkScoreCache cache,
+            List<ScoredPawn> scores)
         {
+            scores.Clear();
             IReadOnlyList<ScoreFactor> factors = FactorsFor(workType);
-            if (pawns.Count == 0)
+            if (pawns.Count == 0 || factors.Count == 0)
             {
-                return new List<ScoredPawn>();
+                return;
             }
 
-            var raw = new float[pawns.Count, factors.Count];
-            for (int pawnIndex = 0; pawnIndex < pawns.Count; pawnIndex++)
-            {
-                for (int factorIndex = 0; factorIndex < factors.Count; factorIndex++)
-                {
-                    raw[pawnIndex, factorIndex] = RawValue(pawns[pawnIndex], workType, factors[factorIndex], cache);
-                }
-            }
-
-            var minimums = new float[factors.Count];
-            var maximums = new float[factors.Count];
+            float[] raw;
+            float[] minimums;
+            float[] maximums;
+            cache.GetBuffers(pawns.Count * factors.Count, factors.Count, out raw, out minimums, out maximums);
             for (int factorIndex = 0; factorIndex < factors.Count; factorIndex++)
             {
                 minimums[factorIndex] = float.MaxValue;
                 maximums[factorIndex] = float.MinValue;
-                for (int pawnIndex = 0; pawnIndex < pawns.Count; pawnIndex++)
+            }
+
+            for (int pawnIndex = 0; pawnIndex < pawns.Count; pawnIndex++)
+            {
+                for (int factorIndex = 0; factorIndex < factors.Count; factorIndex++)
                 {
-                    minimums[factorIndex] = Math.Min(minimums[factorIndex], raw[pawnIndex, factorIndex]);
-                    maximums[factorIndex] = Math.Max(maximums[factorIndex], raw[pawnIndex, factorIndex]);
+                    int rawIndex = pawnIndex * factors.Count + factorIndex;
+                    float value = RawValue(pawns[pawnIndex], workType, factors[factorIndex], cache);
+                    raw[rawIndex] = value;
+                    minimums[factorIndex] = Math.Min(minimums[factorIndex], value);
+                    maximums[factorIndex] = Math.Max(maximums[factorIndex], value);
                 }
             }
 
-            var scores = new List<ScoredPawn>(pawns.Count);
+            float totalWeight = 0f;
+            for (int factorIndex = 0; factorIndex < factors.Count; factorIndex++)
+            {
+                totalWeight += factors[factorIndex].Weight;
+            }
+
+            if (scores.Capacity < pawns.Count)
+            {
+                scores.Capacity = pawns.Count;
+            }
+
             for (int pawnIndex = 0; pawnIndex < pawns.Count; pawnIndex++)
             {
                 float score = 0f;
-                float totalWeight = 0f;
                 for (int factorIndex = 0; factorIndex < factors.Count; factorIndex++)
                 {
                     float min = minimums[factorIndex];
                     float max = maximums[factorIndex];
-                    float normalized = max - min < 0.0001f ? 0.5f : Mathf.InverseLerp(min, max, raw[pawnIndex, factorIndex]);
+                    float normalized = max - min < 0.0001f
+                        ? 0.5f
+                        : Mathf.InverseLerp(min, max, raw[pawnIndex * factors.Count + factorIndex]);
                     if (factors[factorIndex].LowerIsBetter)
                     {
                         normalized = 1f - normalized;
                     }
 
                     score += normalized * factors[factorIndex].Weight;
-                    totalWeight += factors[factorIndex].Weight;
                 }
 
                 if (totalWeight > 0f)
@@ -302,7 +377,6 @@ namespace AutoPriority
                     ? skillComparison
                     : left.Pawn.thingIDNumber.CompareTo(right.Pawn.thingIDNumber);
             });
-            return scores;
         }
 
         private static float RawValue(Pawn pawn, WorkTypeDef workType, ScoreFactor factor, WorkScoreCache cache)

@@ -78,7 +78,6 @@ namespace AutoPriority
 
         public int PriorityForRank(int zeroBasedRank)
         {
-            EnsureRankPriorities();
             return zeroBasedRank < RankGroupCounts[0] ? RankPriorities[0] : RankPriorities[1];
         }
 
@@ -148,11 +147,16 @@ namespace AutoPriority
         {
             public readonly WorkTypeSettings Settings;
             public readonly WorkTypeDef WorkType;
+            public readonly CircumstanceRule[] EnabledRules;
 
-            public ResolvedWorkProfile(WorkTypeSettings settings, WorkTypeDef workType)
+            public ResolvedWorkProfile(
+                WorkTypeSettings settings,
+                WorkTypeDef workType,
+                CircumstanceRule[] enabledRules)
             {
                 Settings = settings;
                 WorkType = workType;
+                EnabledRules = enabledRules;
             }
         }
 
@@ -188,6 +192,14 @@ namespace AutoPriority
         private readonly List<ResolvedLeftoverWork> enabledLeftoverWorkTypes = new List<ResolvedLeftoverWork>();
         private readonly HashSet<CircumstanceType> requiredCircumstances = new HashSet<CircumstanceType>();
         private static readonly IReadOnlyList<ScoredPawn> EmptyRanking = new List<ScoredPawn>();
+        private readonly WorkScoreCache scoreCache = new WorkScoreCache();
+        private readonly List<Pawn> allColonists = new List<Pawn>();
+        private readonly List<Pawn> candidates = new List<Pawn>();
+        private readonly List<Pawn> capableColonists = new List<Pawn>();
+        private readonly HashSet<Pawn> selected = new HashSet<Pawn>();
+        private readonly HashSet<Pawn> assignedColonists = new HashSet<Pawn>();
+        private readonly Dictionary<WorkTypeDef, HashSet<Pawn>> primaryAssignments =
+            new Dictionary<WorkTypeDef, HashSet<Pawn>>();
 
         private int nextRecalculationTick;
         private int knownWorkTypeCount = -1;
@@ -431,7 +443,7 @@ namespace AutoPriority
         private void RecalculateMap(Map map)
         {
             List<Pawn> spawned = map.mapPawns.FreeColonistsSpawned;
-            var allColonists = new List<Pawn>(spawned.Count);
+            allColonists.Clear();
             for (int index = 0; index < spawned.Count; index++)
             {
                 Pawn pawn = spawned[index];
@@ -457,12 +469,12 @@ namespace AutoPriority
                 lastRankings.Add(map.uniqueID, mapRankings);
             }
 
-            var scoreCache = new WorkScoreCache();
-            var candidates = new List<Pawn>(allColonists.Count);
-            var capableColonists = new List<Pawn>(allColonists.Count);
-            var selected = new HashSet<Pawn>();
-            var assignedColonists = new HashSet<Pawn>();
-            var primaryAssignments = new Dictionary<WorkTypeDef, HashSet<Pawn>>();
+            scoreCache.BeginPass();
+            assignedColonists.Clear();
+            foreach (HashSet<Pawn> workers in primaryAssignments.Values)
+            {
+                workers.Clear();
+            }
 
             for (int profileIndex = 0; profileIndex < enabledProfiles.Count; profileIndex++)
             {
@@ -486,15 +498,22 @@ namespace AutoPriority
                     }
                 }
 
-                List<ScoredPawn> ranking = WorkScoring.Rank(workType, candidates, scoreCache);
-                mapRankings[workType] = ranking;
+                List<ScoredPawn> ranking;
+                if (!mapRankings.TryGetValue(workType, out ranking))
+                {
+                    ranking = new List<ScoredPawn>(allColonists.Count);
+                    mapRankings.Add(workType, ranking);
+                }
+
+                WorkScoring.Rank(workType, candidates, scoreCache, ranking);
 
                 int extraWorkers = 0;
                 int priorityBoost = 0;
-                for (int ruleIndex = 0; ruleIndex < profile.CircumstanceRules.Count; ruleIndex++)
+                CircumstanceRule[] enabledRules = resolved.EnabledRules;
+                for (int ruleIndex = 0; ruleIndex < enabledRules.Length; ruleIndex++)
                 {
-                    CircumstanceRule rule = profile.CircumstanceRules[ruleIndex];
-                    if (rule.Enabled && snapshot.IsActive(rule.Type))
+                    CircumstanceRule rule = enabledRules[ruleIndex];
+                    if (snapshot.IsActive(rule.Type))
                     {
                         extraWorkers = Math.Max(extraWorkers, rule.ExtraWorkers);
                         priorityBoost = Math.Max(priorityBoost, rule.PriorityBoost);
@@ -524,7 +543,14 @@ namespace AutoPriority
                     }
                 }
 
-                primaryAssignments[workType] = new HashSet<Pawn>(selected);
+                HashSet<Pawn> primaryWorkers;
+                if (!primaryAssignments.TryGetValue(workType, out primaryWorkers))
+                {
+                    primaryWorkers = new HashSet<Pawn>();
+                    primaryAssignments.Add(workType, primaryWorkers);
+                }
+
+                primaryWorkers.UnionWith(selected);
             }
 
             if (ManageLeftoverColonists)
@@ -590,15 +616,30 @@ namespace AutoPriority
                     continue;
                 }
 
-                enabledProfiles.Add(new ResolvedWorkProfile(profile, workType));
+                int enabledRuleCount = 0;
+                for (int ruleIndex = 0; ruleIndex < profile.CircumstanceRules.Count; ruleIndex++)
+                {
+                    if (profile.CircumstanceRules[ruleIndex].Enabled)
+                    {
+                        enabledRuleCount++;
+                    }
+                }
+
+                var enabledRules = new CircumstanceRule[enabledRuleCount];
+                int enabledRuleIndex = 0;
                 for (int ruleIndex = 0; ruleIndex < profile.CircumstanceRules.Count; ruleIndex++)
                 {
                     CircumstanceRule rule = profile.CircumstanceRules[ruleIndex];
-                    if (rule.Enabled)
+                    if (!rule.Enabled)
                     {
-                        requiredCircumstances.Add(rule.Type);
+                        continue;
                     }
+
+                    enabledRules[enabledRuleIndex++] = rule;
+                    requiredCircumstances.Add(rule.Type);
                 }
+
+                enabledProfiles.Add(new ResolvedWorkProfile(profile, workType, enabledRules));
             }
 
             if (ManageLeftoverColonists)
