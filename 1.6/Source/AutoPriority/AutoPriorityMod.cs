@@ -328,7 +328,7 @@ namespace AutoPriority
             Widgets.DrawMenuSection(rect);
             WorkTypeSettings profile = settings.ProfileFor(workType);
             profile.EnsureValid();
-            float contentHeight = 490f + Math.Max(1, profile.WorkerCount) * 36f + profile.CircumstanceRules.Count * 104f;
+            float contentHeight = 620f + profile.CircumstanceRules.Count * 104f;
             IReadOnlyList<ScoredPawn> ranking = Find.CurrentMap == null
                 ? new List<ScoredPawn>()
                 : settings.RankingFor(Find.CurrentMap, workType);
@@ -358,28 +358,23 @@ namespace AutoPriority
                 changed = true;
             }
 
-            int workers = Mathf.RoundToInt(listing.SliderLabeled(
-                "AutoPriority.NumPawns.Value".Translate(profile.WorkerCount), profile.WorkerCount, 0f, 20f, 0.65f,
-                "AutoPriority.NumPawns.Desc".Translate()));
-            if (workers != profile.WorkerCount)
-            {
-                profile.WorkerCount = workers;
-                profile.EnsureRankPriorities();
-                changed = true;
-            }
-
             listing.Gap();
-            listing.Label("AutoPriority.RankPriorities".Translate());
+            listing.Label("AutoPriority.RankGroups".Translate());
             int maximumPriority = PriorityCompatibility.MaximumPriority;
-            listing.Label("AutoPriority.RankPriorities.Desc".Translate(maximumPriority));
-            for (int index = 0; index < profile.WorkerCount; index++)
+            listing.Label("AutoPriority.RankGroups.Desc".Translate(maximumPriority));
+            for (int index = 0; index < 2; index++)
             {
+                int count = Mathf.RoundToInt(listing.SliderLabeled(
+                    "AutoPriority.RankGroup.Count".Translate(index + 1, profile.RankGroupCounts[index]),
+                    profile.RankGroupCounts[index], 0f, 20f));
                 int priority = Mathf.RoundToInt(listing.SliderLabeled(
-                    "AutoPriority.PriorityForRank".Translate(index + 1, profile.RankPriorities[index]),
+                    "AutoPriority.RankGroup.Priority".Translate(index + 1, profile.RankPriorities[index]),
                     profile.RankPriorities[index], 0f, maximumPriority));
-                if (priority != profile.RankPriorities[index])
+                if (count != profile.RankGroupCounts[index] || priority != profile.RankPriorities[index])
                 {
+                    profile.RankGroupCounts[index] = count;
                     profile.RankPriorities[index] = priority;
+                    profile.EnsureRankPriorities();
                     changed = true;
                 }
             }

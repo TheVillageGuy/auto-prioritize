@@ -11,6 +11,7 @@ namespace AutoPriority
         public string WorkTypeDefName;
         public bool Enabled;
         public int WorkerCount = 1;
+        public List<int> RankGroupCounts = new List<int>();
         public List<int> RankPriorities = new List<int>();
         public List<CircumstanceRule> CircumstanceRules = new List<CircumstanceRule>();
 
@@ -27,15 +28,19 @@ namespace AutoPriority
         public void ResetToDefaults()
         {
             Enabled = false;
-            WorkerCount = DefaultWorkerCount(WorkTypeDefName);
-            RankPriorities = new List<int>();
+            RankGroupCounts = new List<int> { 1, 1 };
+            RankPriorities = new List<int> { 1, 2 };
             EnsureRankPriorities();
             CircumstanceRules = CircumstanceCatalog.CreateRules(WorkTypeDefName);
         }
 
         public void EnsureValid()
         {
-            WorkerCount = Math.Max(0, Math.Min(20, WorkerCount));
+            if (RankGroupCounts == null)
+            {
+                RankGroupCounts = new List<int>();
+            }
+
             if (RankPriorities == null)
             {
                 RankPriorities = new List<int>();
@@ -52,21 +57,29 @@ namespace AutoPriority
 
         public void EnsureRankPriorities()
         {
-            while (RankPriorities.Count < Math.Max(1, WorkerCount))
+            while (RankGroupCounts.Count < 2)
+            {
+                RankGroupCounts.Add(1);
+            }
+
+            while (RankPriorities.Count < 2)
             {
                 RankPriorities.Add(RankPriorities.Count == 0 ? 1 : 2);
             }
 
-            for (int index = 0; index < RankPriorities.Count; index++)
+            for (int index = 0; index < 2; index++)
             {
+                RankGroupCounts[index] = Math.Max(0, Math.Min(20, RankGroupCounts[index]));
                 RankPriorities[index] = Math.Max(0, Math.Min(PriorityCompatibility.MaximumPriority, RankPriorities[index]));
             }
+
+            WorkerCount = RankGroupCounts[0] + RankGroupCounts[1];
         }
 
         public int PriorityForRank(int zeroBasedRank)
         {
             EnsureRankPriorities();
-            return RankPriorities[Math.Min(zeroBasedRank, RankPriorities.Count - 1)];
+            return zeroBasedRank < RankGroupCounts[0] ? RankPriorities[0] : RankPriorities[1];
         }
 
         public void ExposeData()
@@ -74,6 +87,7 @@ namespace AutoPriority
             Scribe_Values.Look(ref WorkTypeDefName, "workTypeDefName");
             Scribe_Values.Look(ref Enabled, "enabled", false);
             Scribe_Values.Look(ref WorkerCount, "workerCount", 1);
+            Scribe_Collections.Look(ref RankGroupCounts, "rankGroupCounts", LookMode.Value);
             Scribe_Collections.Look(ref RankPriorities, "rankPriorities", LookMode.Value);
             Scribe_Collections.Look(ref CircumstanceRules, "circumstanceRules", LookMode.Deep);
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
@@ -82,19 +96,6 @@ namespace AutoPriority
             }
         }
 
-        private static int DefaultWorkerCount(string defName)
-        {
-            switch (defName)
-            {
-                case "Doctor":
-                case "Firefighter":
-                case "Hauling":
-                case "Cleaning":
-                    return 2;
-                default:
-                    return 1;
-            }
-        }
     }
 
     public sealed class LeftoverWorkSetting : IExposable
@@ -668,13 +669,15 @@ namespace AutoPriority
                 var profile = new WorkTypeSettings(pair.Key.defName)
                 {
                     Enabled = pair.Value > 0 && priority > 0,
-                    WorkerCount = Math.Max(0, pair.Value)
+                    WorkerCount = Math.Max(0, pair.Value),
+                    RankGroupCounts = priority == 1
+                        ? new List<int> { Math.Max(0, pair.Value), 0 }
+                        : new List<int> { 0, Math.Max(0, pair.Value) }
                 };
                 profile.EnsureRankPriorities();
-                for (int index = 0; index < profile.RankPriorities.Count; index++)
-                {
-                    profile.RankPriorities[index] = Math.Max(0, Math.Min(PriorityCompatibility.MaximumPriority, priority));
-                }
+                int migratedPriority = Math.Max(0, Math.Min(PriorityCompatibility.MaximumPriority, priority));
+                profile.RankPriorities[0] = migratedPriority;
+                profile.RankPriorities[1] = migratedPriority;
 
                 Profiles.Add(profile);
             }

@@ -19,6 +19,10 @@
     <AutoPriority.RankPriorities>Priority for each ranked colonist</AutoPriority.RankPriorities>
     <AutoPriority.RankPriorities.Desc>The best candidate is colonist #1. Priority 0 disables the work, priority 1 is highest, and priority {0} is lowest.</AutoPriority.RankPriorities.Desc>
     <AutoPriority.PriorityForRank>Colonist #{0}: priority {1}</AutoPriority.PriorityForRank>
+    <AutoPriority.RankGroups>Ranked colonist groups</AutoPriority.RankGroups>
+    <AutoPriority.RankGroups.Desc>The best candidates fill rank group 1 first, followed by rank group 2. Priority 0 disables work, priority 1 is highest, and priority {0} is lowest. Circumstance-added workers join group 2.</AutoPriority.RankGroups.Desc>
+    <AutoPriority.RankGroup.Count>Rank group #{0} colonists: {1}</AutoPriority.RankGroup.Count>
+    <AutoPriority.RankGroup.Priority>Rank group #{0} work priority: {1}</AutoPriority.RankGroup.Priority>
     <AutoPriority.CalculationFactors>Calculation factors</AutoPriority.CalculationFactors>
     <AutoPriority.CalculationFactors.Desc>Every eligible colonist is compared on these final in-game values. Final stats already include skills, health capacities, genes, equipment, and other modifiers.</AutoPriority.CalculationFactors.Desc>
     <AutoPriority.Factor.RelevantSkill>Relevant skill level</AutoPriority.Factor.RelevantSkill>
