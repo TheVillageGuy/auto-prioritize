@@ -17,7 +17,7 @@
     <AutoPriority.NumPawns.Value>Base colonists assigned: {0}</AutoPriority.NumPawns.Value>
     <AutoPriority.NumPawns.Desc>The normal number of top-ranked colonists assigned to this work type. Circumstances can temporarily add more.</AutoPriority.NumPawns.Desc>
     <AutoPriority.RankPriorities>Priority for each ranked colonist</AutoPriority.RankPriorities>
-    <AutoPriority.RankPriorities.Desc>The best candidate is colonist #1. Priority 1 is highest and priority 4 is lowest.</AutoPriority.RankPriorities.Desc>
+    <AutoPriority.RankPriorities.Desc>The best candidate is colonist #1. Priority 0 disables the work, priority 1 is highest, and priority {0} is lowest.</AutoPriority.RankPriorities.Desc>
     <AutoPriority.PriorityForRank>Colonist #{0}: priority {1}</AutoPriority.PriorityForRank>
     <AutoPriority.CalculationFactors>Calculation factors</AutoPriority.CalculationFactors>
     <AutoPriority.CalculationFactors.Desc>Every eligible colonist is compared on these final in-game values. Final stats already include skills, health capacities, genes, equipment, and other modifiers.</AutoPriority.CalculationFactors.Desc>
@@ -40,7 +40,7 @@
     <AutoPriority.Leftovers.Manage>Assign work to leftover colonists</AutoPriority.Leftovers.Manage>
     <AutoPriority.Leftovers.Manage.Desc>When enabled, this mod controls the selected fallback work types for colonists without a ranked assignment.</AutoPriority.Leftovers.Manage.Desc>
     <AutoPriority.Leftovers.WorkTypes>Basic and fallback work types</AutoPriority.Leftovers.WorkTypes>
-    <AutoPriority.Leftovers.WorkTypes.Desc>Select every work type leftover colonists should perform and choose its priority. Priority 1 is highest and priority 4 is lowest.</AutoPriority.Leftovers.WorkTypes.Desc>
+    <AutoPriority.Leftovers.WorkTypes.Desc>Select every work type leftover colonists should perform and choose its priority. Priority 0 disables the work, priority 1 is highest, and priority {0} is lowest.</AutoPriority.Leftovers.WorkTypes.Desc>
     <AutoPriority.Leftovers.Priority>Fallback priority: {0}</AutoPriority.Leftovers.Priority>
     <AutoPriority.Leftovers.Clear>Clear fallback settings</AutoPriority.Leftovers.Clear>
 

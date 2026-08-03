@@ -264,7 +264,8 @@ namespace AutoPriority
 
             listing.Gap();
             listing.Label("AutoPriority.Leftovers.WorkTypes".Translate());
-            listing.Label("AutoPriority.Leftovers.WorkTypes.Desc".Translate());
+            int maximumPriority = PriorityCompatibility.MaximumPriority;
+            listing.Label("AutoPriority.Leftovers.WorkTypes.Desc".Translate(maximumPriority));
             listing.Gap();
 
             for (int index = 0; index < workTypes.Count; index++)
@@ -285,7 +286,7 @@ namespace AutoPriority
                 if (fallback.Enabled)
                 {
                     int priority = Mathf.RoundToInt(listing.SliderLabeled(
-                        "AutoPriority.Leftovers.Priority".Translate(fallback.Priority), fallback.Priority, 1f, 4f));
+                        "AutoPriority.Leftovers.Priority".Translate(fallback.Priority), fallback.Priority, 0f, maximumPriority));
                     if (priority != fallback.Priority)
                     {
                         fallback.Priority = priority;
@@ -369,12 +370,13 @@ namespace AutoPriority
 
             listing.Gap();
             listing.Label("AutoPriority.RankPriorities".Translate());
-            listing.Label("AutoPriority.RankPriorities.Desc".Translate());
+            int maximumPriority = PriorityCompatibility.MaximumPriority;
+            listing.Label("AutoPriority.RankPriorities.Desc".Translate(maximumPriority));
             for (int index = 0; index < profile.WorkerCount; index++)
             {
                 int priority = Mathf.RoundToInt(listing.SliderLabeled(
                     "AutoPriority.PriorityForRank".Translate(index + 1, profile.RankPriorities[index]),
-                    profile.RankPriorities[index], 1f, 4f));
+                    profile.RankPriorities[index], 0f, maximumPriority));
                 if (priority != profile.RankPriorities[index])
                 {
                     profile.RankPriorities[index] = priority;

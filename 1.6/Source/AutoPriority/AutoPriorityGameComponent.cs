@@ -59,7 +59,7 @@ namespace AutoPriority
 
             for (int index = 0; index < RankPriorities.Count; index++)
             {
-                RankPriorities[index] = Math.Max(1, Math.Min(4, RankPriorities[index]));
+                RankPriorities[index] = Math.Max(0, Math.Min(PriorityCompatibility.MaximumPriority, RankPriorities[index]));
             }
         }
 
@@ -115,7 +115,7 @@ namespace AutoPriority
 
         public void EnsureValid()
         {
-            Priority = Math.Max(1, Math.Min(4, Priority));
+            Priority = Math.Max(0, Math.Min(PriorityCompatibility.MaximumPriority, Priority));
         }
 
         public void ExposeData()
@@ -507,7 +507,10 @@ namespace AutoPriority
                     Pawn pawn = ranking[rank].Pawn;
                     selected.Add(pawn);
                     assignedColonists.Add(pawn);
-                    int priority = Math.Max(1, profile.PriorityForRank(rank) - priorityBoost);
+                    int configuredPriority = profile.PriorityForRank(rank);
+                    int priority = configuredPriority == 0
+                        ? 0
+                        : Math.Max(1, configuredPriority - priorityBoost);
                     PriorityCompatibility.SetPriorityIfChanged(pawn, workType, priority);
                 }
 
@@ -670,7 +673,7 @@ namespace AutoPriority
                 profile.EnsureRankPriorities();
                 for (int index = 0; index < profile.RankPriorities.Count; index++)
                 {
-                    profile.RankPriorities[index] = Math.Max(1, Math.Min(4, priority));
+                    profile.RankPriorities[index] = Math.Max(0, Math.Min(PriorityCompatibility.MaximumPriority, priority));
                 }
 
                 Profiles.Add(profile);

@@ -15,9 +15,11 @@ namespace AutoPriority
     {
         private delegate void ScheduledPrioritySetter(Pawn pawn, WorkTypeDef workType, int priority, List<int> hours);
         private delegate int ScheduledPriorityGetter(Pawn pawn, WorkTypeDef workType, int hour);
+        private delegate int MaximumPriorityGetter();
 
         private static readonly ScheduledPrioritySetter WorkTabSetter;
         private static readonly ScheduledPriorityGetter WorkTabGetter;
+        private static readonly MaximumPriorityGetter WorkTabMaximumPriority;
 
         static PriorityCompatibility()
         {
@@ -42,15 +44,39 @@ namespace AutoPriority
                     new[] { typeof(Pawn), typeof(WorkTypeDef), typeof(int) },
                     null);
 
+                Type settings = FindType("WorkTab.Settings");
+                PropertyInfo maximumPriority = settings == null
+                    ? null
+                    : settings.GetProperty("MaxPriority", BindingFlags.Public | BindingFlags.Static);
+
                 if (setter != null && getter != null)
                 {
                     WorkTabSetter = (ScheduledPrioritySetter)Delegate.CreateDelegate(typeof(ScheduledPrioritySetter), setter);
                     WorkTabGetter = (ScheduledPriorityGetter)Delegate.CreateDelegate(typeof(ScheduledPriorityGetter), getter);
                 }
+
+                if (maximumPriority != null && maximumPriority.GetGetMethod() != null)
+                {
+                    WorkTabMaximumPriority = (MaximumPriorityGetter)Delegate.CreateDelegate(
+                        typeof(MaximumPriorityGetter), maximumPriority.GetGetMethod());
+                }
             }
             catch (Exception exception)
             {
                 Log.Warning("[Let Me Skill For You] Work Tab was detected, but its optional scheduling bridge could not be initialized. Vanilla priority compatibility will be used. " + exception.Message);
+            }
+        }
+
+        public static int MaximumPriority
+        {
+            get
+            {
+                if (WorkTabMaximumPriority == null)
+                {
+                    return 4;
+                }
+
+                return Math.Max(4, Math.Min(99, WorkTabMaximumPriority()));
             }
         }
 
