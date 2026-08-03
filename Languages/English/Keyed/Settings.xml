@@ -12,6 +12,7 @@
     <AutoPriority.Interval.Faster>Faster</AutoPriority.Interval.Faster>
     <AutoPriority.Interval.Lighter>Less CPU</AutoPriority.Interval.Lighter>
     <AutoPriority.ApplyNow>Apply now</AutoPriority.ApplyNow>
+    <AutoPriority.Applying>Applying assignments: {0} / {1} colonists (up to 1 ms per tick)</AutoPriority.Applying>
     <AutoPriority.ManageWorkType>Manage this work type</AutoPriority.ManageWorkType>
     <AutoPriority.ManageWorkType.Desc>When enabled, this mod controls this work type for every eligible colonist on each map. Other work types are left untouched.</AutoPriority.ManageWorkType.Desc>
     <AutoPriority.NumPawns.Value>Base colonists assigned: {0}</AutoPriority.NumPawns.Value>

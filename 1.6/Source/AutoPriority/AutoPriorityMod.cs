@@ -50,8 +50,8 @@ namespace AutoPriority
                 selectedWorkTypeDefName = workTypes[0].defName;
             }
 
-            bool changed = DrawGlobalControls(inRect.TopPartPixels(88f), settings);
-            Rect body = new Rect(inRect.x, inRect.y + 94f, inRect.width, inRect.height - 94f);
+            bool changed = DrawGlobalControls(inRect.TopPartPixels(112f), settings);
+            Rect body = new Rect(inRect.x, inRect.y + 118f, inRect.width, inRect.height - 118f);
             Rect navigation = new Rect(body.x, body.y, NavigationWidth, body.height);
             Rect detail = new Rect(navigation.xMax + 10f, body.y, body.width - NavigationWidth - 10f, body.height);
 
@@ -119,6 +119,13 @@ namespace AutoPriority
             {
                 settings.RecalculationInterval = interval;
                 changed = true;
+            }
+
+            if (settings.PendingAssignmentTotal > 0)
+            {
+                int applied = settings.PendingAssignmentTotal - settings.PendingAssignmentCount;
+                Widgets.Label(new Rect(inner.x, inner.y + 62f, inner.width, 24f),
+                    "AutoPriority.Applying".Translate(applied, settings.PendingAssignmentTotal));
             }
 
             return changed;

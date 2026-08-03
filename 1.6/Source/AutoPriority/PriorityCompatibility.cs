@@ -125,6 +125,13 @@ namespace AutoPriority
             }
         }
 
+        public static int GetPriority(Pawn pawn, WorkTypeDef workType)
+        {
+            return WorkTabGetter != null
+                ? WorkTabGetter(pawn, workType, -1)
+                : pawn.workSettings.GetPriority(workType);
+        }
+
         public static void BeginBatch()
         {
             batchActive = true;

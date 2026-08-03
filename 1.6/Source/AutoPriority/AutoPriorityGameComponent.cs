@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using RimWorld;
 using Verse;
@@ -140,6 +141,18 @@ namespace AutoPriority
     // The class name is kept for compatibility with saves made by the older releases.
     public sealed class AutoPrioritySettings : GameComponent
     {
+        private sealed class PendingPawnAssignment
+        {
+            public Pawn Pawn;
+            public readonly Dictionary<WorkTypeDef, int> Priorities = new Dictionary<WorkTypeDef, int>();
+
+            public void Reset(Pawn pawn)
+            {
+                Pawn = pawn;
+                Priorities.Clear();
+            }
+        }
+
         private sealed class ResolvedWorkProfile
         {
             public readonly WorkTypeSettings Settings;
@@ -171,6 +184,7 @@ namespace AutoPriority
 
         public const int MinimumRecalculationInterval = 250;
         public const int MaximumRecalculationInterval = 60000;
+        public const double AssignmentBudgetMilliseconds = 1.0;
 
         private static List<WorkTypeDef> legacyNumberKeys;
         private static List<int> legacyNumberValues;
@@ -197,8 +211,15 @@ namespace AutoPriority
         private readonly HashSet<Pawn> assignedColonists = new HashSet<Pawn>();
         private readonly Dictionary<WorkTypeDef, HashSet<Pawn>> primaryAssignments =
             new Dictionary<WorkTypeDef, HashSet<Pawn>>();
+        private readonly Dictionary<Pawn, PendingPawnAssignment> pendingAssignmentsByPawn =
+            new Dictionary<Pawn, PendingPawnAssignment>();
+        private readonly List<PendingPawnAssignment> pendingAssignments = new List<PendingPawnAssignment>();
+        private readonly List<PendingPawnAssignment> pendingAssignmentPool = new List<PendingPawnAssignment>();
+        private readonly Stopwatch assignmentStopwatch = new Stopwatch();
 
         private int nextRecalculationTick;
+        private int nextPendingAssignmentIndex;
+        private int pendingAssignmentTotal;
         private int knownWorkTypeCount = -1;
         private bool runtimeCacheDirty = true;
 
@@ -226,13 +247,24 @@ namespace AutoPriority
         public override void GameComponentTick()
         {
             base.GameComponentTick();
-            if (!AutomationEnabled || Find.TickManager.TicksGame < nextRecalculationTick)
+            if (!AutomationEnabled)
+            {
+                ClearPendingAssignments();
+                return;
+            }
+
+            if (nextPendingAssignmentIndex < pendingAssignments.Count)
+            {
+                ApplyPendingAssignmentsForTick();
+                return;
+            }
+
+            if (Find.TickManager.TicksGame < nextRecalculationTick)
             {
                 return;
             }
 
             RecalculateAllMaps();
-            nextRecalculationTick = Find.TickManager.TicksGame + RecalculationInterval;
         }
 
         public override void ExposeData()
@@ -375,15 +407,24 @@ namespace AutoPriority
 
         public void NotifySettingsChanged(bool applyImmediately)
         {
+            ClearPendingAssignments();
             EnsureProfiles();
             runtimeCacheDirty = true;
             RebuildRuntimeCaches();
-            nextRecalculationTick = Find.TickManager.TicksGame;
             if (applyImmediately && AutomationEnabled)
             {
                 RecalculateAllMaps();
-                nextRecalculationTick = Find.TickManager.TicksGame + RecalculationInterval;
             }
+        }
+
+        public int PendingAssignmentCount
+        {
+            get { return Math.Max(0, pendingAssignments.Count - nextPendingAssignmentIndex); }
+        }
+
+        public int PendingAssignmentTotal
+        {
+            get { return pendingAssignmentTotal; }
         }
 
         public ColonyCircumstanceSnapshot SnapshotFor(Map map)
@@ -418,11 +459,13 @@ namespace AutoPriority
             RebuildRuntimeCaches();
             if (enabledProfiles.Count == 0 && (!ManageLeftoverColonists || enabledLeftoverWorkTypes.Count == 0))
             {
+                ClearPendingAssignments();
+                nextRecalculationTick = Find.TickManager.TicksGame + RecalculationInterval;
                 return;
             }
 
             EnsureManualPrioritiesEnabled();
-            PriorityCompatibility.BeginBatch();
+            BeginAssignmentPlan();
             try
             {
                 List<Map> maps = Find.Maps;
@@ -441,7 +484,7 @@ namespace AutoPriority
             }
             finally
             {
-                PriorityCompatibility.EndBatch();
+                FinishAssignmentPlan();
             }
         }
 
@@ -546,7 +589,7 @@ namespace AutoPriority
                         Pawn pawn = ranking[rank].Pawn;
                         selected.Add(pawn);
                         assignedColonists.Add(pawn);
-                        PriorityCompatibility.SetPriorityIfChanged(pawn, workType, priority);
+                        QueuePriority(pawn, workType, priority);
                         rank++;
                     }
                 }
@@ -556,7 +599,7 @@ namespace AutoPriority
                     Pawn pawn = capableColonists[pawnIndex];
                     if (!selected.Contains(pawn))
                     {
-                        PriorityCompatibility.SetPriorityIfChanged(pawn, workType, 0);
+                        QueuePriority(pawn, workType, 0);
                     }
                 }
 
@@ -603,9 +646,136 @@ namespace AutoPriority
                     }
 
                     int priority = assignedColonists.Contains(pawn) ? 0 : fallback.Settings.Priority;
-                    PriorityCompatibility.SetPriorityIfChanged(pawn, fallback.WorkType, priority);
+                    QueuePriority(pawn, fallback.WorkType, priority);
                 }
             }
+        }
+
+        private void BeginAssignmentPlan()
+        {
+            ClearPendingAssignments();
+            pendingAssignmentsByPawn.Clear();
+        }
+
+        private void QueuePriority(Pawn pawn, WorkTypeDef workType, int priority)
+        {
+            PendingPawnAssignment assignment;
+            if (pendingAssignmentsByPawn.TryGetValue(pawn, out assignment))
+            {
+                if (PriorityCompatibility.GetPriority(pawn, workType) == priority)
+                {
+                    assignment.Priorities.Remove(workType);
+                }
+                else
+                {
+                    assignment.Priorities[workType] = priority;
+                }
+
+                return;
+            }
+
+            if (PriorityCompatibility.GetPriority(pawn, workType) == priority)
+            {
+                return;
+            }
+
+            int poolIndex = pendingAssignmentPool.Count - 1;
+            if (poolIndex >= 0)
+            {
+                assignment = pendingAssignmentPool[poolIndex];
+                pendingAssignmentPool.RemoveAt(poolIndex);
+                assignment.Reset(pawn);
+            }
+            else
+            {
+                assignment = new PendingPawnAssignment();
+                assignment.Reset(pawn);
+            }
+
+            assignment.Priorities.Add(workType, priority);
+            pendingAssignmentsByPawn.Add(pawn, assignment);
+            pendingAssignments.Add(assignment);
+        }
+
+        private void FinishAssignmentPlan()
+        {
+            int writeIndex = 0;
+            for (int readIndex = 0; readIndex < pendingAssignments.Count; readIndex++)
+            {
+                PendingPawnAssignment assignment = pendingAssignments[readIndex];
+                if (assignment.Priorities.Count == 0)
+                {
+                    assignment.Reset(null);
+                    pendingAssignmentPool.Add(assignment);
+                    continue;
+                }
+
+                pendingAssignments[writeIndex++] = assignment;
+            }
+
+            if (writeIndex < pendingAssignments.Count)
+            {
+                pendingAssignments.RemoveRange(writeIndex, pendingAssignments.Count - writeIndex);
+            }
+
+            pendingAssignmentsByPawn.Clear();
+            nextPendingAssignmentIndex = 0;
+            pendingAssignmentTotal = pendingAssignments.Count;
+            if (pendingAssignments.Count == 0)
+            {
+                nextRecalculationTick = Find.TickManager.TicksGame + RecalculationInterval;
+            }
+        }
+
+        private void ApplyPendingAssignmentsForTick()
+        {
+            assignmentStopwatch.Reset();
+            assignmentStopwatch.Start();
+            int processedThisTick = 0;
+            while (nextPendingAssignmentIndex < pendingAssignments.Count &&
+                   (processedThisTick == 0 || assignmentStopwatch.Elapsed.TotalMilliseconds < AssignmentBudgetMilliseconds))
+            {
+                PendingPawnAssignment assignment = pendingAssignments[nextPendingAssignmentIndex++];
+                processedThisTick++;
+                Pawn pawn = assignment.Pawn;
+                if (pawn != null && !pawn.Dead && pawn.workSettings != null && pawn.workSettings.Initialized)
+                {
+                    PriorityCompatibility.BeginBatch();
+                    try
+                    {
+                        foreach (KeyValuePair<WorkTypeDef, int> priority in assignment.Priorities)
+                        {
+                            PriorityCompatibility.SetPriorityIfChanged(pawn, priority.Key, priority.Value);
+                        }
+                    }
+                    finally
+                    {
+                        PriorityCompatibility.EndBatch();
+                    }
+                }
+            }
+
+            assignmentStopwatch.Stop();
+            if (nextPendingAssignmentIndex >= pendingAssignments.Count)
+            {
+                nextRecalculationTick = Find.TickManager.TicksGame + RecalculationInterval;
+                ClearPendingAssignments();
+            }
+        }
+
+        private void ClearPendingAssignments()
+        {
+            for (int index = 0; index < pendingAssignments.Count; index++)
+            {
+                PendingPawnAssignment assignment = pendingAssignments[index];
+                assignment.Reset(null);
+                pendingAssignmentPool.Add(assignment);
+            }
+
+            pendingAssignments.Clear();
+            pendingAssignmentsByPawn.Clear();
+            nextPendingAssignmentIndex = 0;
+            pendingAssignmentTotal = 0;
         }
 
         private void RebuildRuntimeCaches()
