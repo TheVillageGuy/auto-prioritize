@@ -138,69 +138,126 @@ namespace AutoPriority
 
         public static ColonyCircumstanceSnapshot Capture(Map map)
         {
+            return Capture(map, null);
+        }
+
+        public static ColonyCircumstanceSnapshot Capture(Map map, ISet<CircumstanceType> requested)
+        {
             var snapshot = new ColonyCircumstanceSnapshot();
             List<Pawn> colonists = map.mapPawns.FreeColonistsSpawned;
             int colonistCount = Math.Max(1, colonists.Count);
 
-            int patients = colonists.Count(pawn => pawn.health != null && pawn.health.HasHediffsNeedingTendByPlayer());
-            patients += map.mapPawns.PrisonersOfColonySpawned.Count(pawn => pawn.health != null && pawn.health.HasHediffsNeedingTendByPlayer());
-            snapshot.counts[CircumstanceType.MedicalEmergency] = patients;
+            if (Needs(requested, CircumstanceType.MedicalEmergency))
+            {
+                int patients = colonists.Count(pawn => pawn.health != null && pawn.health.HasHediffsNeedingTendByPlayer());
+                patients += map.mapPawns.PrisonersOfColonySpawned.Count(pawn => pawn.health != null && pawn.health.HasHediffsNeedingTendByPlayer());
+                snapshot.counts[CircumstanceType.MedicalEmergency] = patients;
+            }
 
-            snapshot.counts[CircumstanceType.Fire] = map.listerThings.ThingsOfDef(ThingDefOf.Fire).Count;
-            snapshot.counts[CircumstanceType.PrisonerLoad] = map.mapPawns.PrisonersOfColonySpawnedCount;
+            if (Needs(requested, CircumstanceType.Fire))
+            {
+                snapshot.counts[CircumstanceType.Fire] = map.listerThings.ThingsOfDef(ThingDefOf.Fire).Count;
+            }
+
+            if (Needs(requested, CircumstanceType.PrisonerLoad))
+            {
+                snapshot.counts[CircumstanceType.PrisonerLoad] = map.mapPawns.PrisonersOfColonySpawnedCount;
+            }
 
             float availableNutrition = 0f;
             int medicine = 0;
             int construction = 0;
             int filth = 0;
-            foreach (Thing thing in map.listerThings.AllThings)
+            bool needsFood = Needs(requested, CircumstanceType.FoodShortage);
+            bool needsMedicine = Needs(requested, CircumstanceType.LowMedicine);
+            bool needsConstruction = Needs(requested, CircumstanceType.ConstructionBacklog);
+            bool needsFilth = Needs(requested, CircumstanceType.CleaningBacklog);
+            if (needsFood || needsMedicine || needsConstruction || needsFilth)
             {
-                if (thing.Destroyed)
+                foreach (Thing thing in map.listerThings.AllThings)
                 {
-                    continue;
-                }
+                    if (thing.Destroyed)
+                    {
+                        continue;
+                    }
 
-                if (thing.def.IsNutritionGivingIngestible && thing.def.ingestible.HumanEdible && !thing.def.IsDrug && !(thing is Corpse))
-                {
-                    availableNutrition += thing.GetStatValue(StatDefOf.Nutrition) * thing.stackCount;
-                }
+                    if (needsFood && thing.def.IsNutritionGivingIngestible && thing.def.ingestible.HumanEdible && !thing.def.IsDrug && !(thing is Corpse))
+                    {
+                        availableNutrition += thing.GetStatValue(StatDefOf.Nutrition) * thing.stackCount;
+                    }
 
-                if (thing.def.IsMedicine)
-                {
-                    medicine += thing.stackCount;
-                }
+                    if (needsMedicine && thing.def.IsMedicine)
+                    {
+                        medicine += thing.stackCount;
+                    }
 
-                if (thing is Blueprint || thing is Frame)
-                {
-                    construction++;
-                }
+                    if (needsConstruction && (thing is Blueprint || thing is Frame))
+                    {
+                        construction++;
+                    }
 
-                if (thing is Filth)
-                {
-                    filth++;
+                    if (needsFilth && thing is Filth)
+                    {
+                        filth++;
+                    }
                 }
             }
 
             // Roughly two days of food. The value intentionally ignores future crops.
-            snapshot.counts[CircumstanceType.FoodShortage] = availableNutrition < colonistCount * 3.2f
-                ? Math.Max(1, (int)Math.Ceiling(colonistCount * 3.2f - availableNutrition))
-                : 0;
-            snapshot.counts[CircumstanceType.LowMedicine] = medicine < colonistCount
-                ? colonistCount - medicine
-                : 0;
-            snapshot.counts[CircumstanceType.ConstructionBacklog] = construction >= 5 ? construction : 0;
-            snapshot.counts[CircumstanceType.CleaningBacklog] = filth >= 50 ? filth : 0;
+            if (needsFood)
+            {
+                snapshot.counts[CircumstanceType.FoodShortage] = availableNutrition < colonistCount * 3.2f
+                    ? Math.Max(1, (int)Math.Ceiling(colonistCount * 3.2f - availableNutrition))
+                    : 0;
+            }
 
-            int haul = CountDesignations(map, DesignationDefOf.Haul);
-            int plants = CountDesignations(map, DesignationDefOf.CutPlant) + CountDesignations(map, DesignationDefOf.HarvestPlant);
-            int animals = CountDesignations(map, DesignationDefOf.Tame) + CountDesignations(map, DesignationDefOf.Slaughter);
-            int hunts = CountDesignations(map, DesignationDefOf.Hunt);
-            snapshot.counts[CircumstanceType.HaulingBacklog] = haul >= 10 ? haul : 0;
-            snapshot.counts[CircumstanceType.PlantBacklog] = plants >= 10 ? plants : 0;
-            snapshot.counts[CircumstanceType.AnimalBacklog] = animals > 0 ? animals : 0;
-            snapshot.counts[CircumstanceType.HuntingBacklog] = hunts >= 3 ? hunts : 0;
+            if (needsMedicine)
+            {
+                snapshot.counts[CircumstanceType.LowMedicine] = medicine < colonistCount
+                    ? colonistCount - medicine
+                    : 0;
+            }
+
+            if (needsConstruction)
+            {
+                snapshot.counts[CircumstanceType.ConstructionBacklog] = construction >= 5 ? construction : 0;
+            }
+
+            if (needsFilth)
+            {
+                snapshot.counts[CircumstanceType.CleaningBacklog] = filth >= 50 ? filth : 0;
+            }
+
+            if (Needs(requested, CircumstanceType.HaulingBacklog))
+            {
+                int haul = CountDesignations(map, DesignationDefOf.Haul);
+                snapshot.counts[CircumstanceType.HaulingBacklog] = haul >= 10 ? haul : 0;
+            }
+
+            if (Needs(requested, CircumstanceType.PlantBacklog))
+            {
+                int plants = CountDesignations(map, DesignationDefOf.CutPlant) + CountDesignations(map, DesignationDefOf.HarvestPlant);
+                snapshot.counts[CircumstanceType.PlantBacklog] = plants >= 10 ? plants : 0;
+            }
+
+            if (Needs(requested, CircumstanceType.AnimalBacklog))
+            {
+                int animals = CountDesignations(map, DesignationDefOf.Tame) + CountDesignations(map, DesignationDefOf.Slaughter);
+                snapshot.counts[CircumstanceType.AnimalBacklog] = animals;
+            }
+
+            if (Needs(requested, CircumstanceType.HuntingBacklog))
+            {
+                int hunts = CountDesignations(map, DesignationDefOf.Hunt);
+                snapshot.counts[CircumstanceType.HuntingBacklog] = hunts >= 3 ? hunts : 0;
+            }
 
             return snapshot;
+        }
+
+        private static bool Needs(ISet<CircumstanceType> requested, CircumstanceType type)
+        {
+            return requested == null || requested.Contains(type);
         }
 
         private static int CountDesignations(Map map, DesignationDef def)

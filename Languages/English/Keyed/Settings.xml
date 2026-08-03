@@ -7,7 +7,10 @@
     <AutoPriority.NeedGame>Need to be in a game to access settings, since they are on a per-game basis</AutoPriority.NeedGame>
     <AutoPriority.NoWorkTypes>No visible work types were loaded.</AutoPriority.NoWorkTypes>
     <AutoPriority.AutomationEnabled>Run automatic work assignment</AutoPriority.AutomationEnabled>
-    <AutoPriority.Interval>Recalculates every {0}</AutoPriority.Interval>
+    <AutoPriority.Interval>Update interval: {0}</AutoPriority.Interval>
+    <AutoPriority.Interval.Desc>How often colonist stats, rankings, circumstances, and assignments are refreshed. Longer intervals use less CPU.</AutoPriority.Interval.Desc>
+    <AutoPriority.Interval.Faster>Faster</AutoPriority.Interval.Faster>
+    <AutoPriority.Interval.Lighter>Less CPU</AutoPriority.Interval.Lighter>
     <AutoPriority.ApplyNow>Apply now</AutoPriority.ApplyNow>
     <AutoPriority.ManageWorkType>Manage this work type</AutoPriority.ManageWorkType>
     <AutoPriority.ManageWorkType.Desc>When enabled, this mod controls this work type for every eligible colonist on each map. Other work types are left untouched.</AutoPriority.ManageWorkType.Desc>

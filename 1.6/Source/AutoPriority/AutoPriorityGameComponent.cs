@@ -100,6 +100,21 @@ namespace AutoPriority
     // The class name is kept for compatibility with saves made by the older releases.
     public sealed class AutoPrioritySettings : GameComponent
     {
+        private sealed class ResolvedWorkProfile
+        {
+            public readonly WorkTypeSettings Settings;
+            public readonly WorkTypeDef WorkType;
+
+            public ResolvedWorkProfile(WorkTypeSettings settings, WorkTypeDef workType)
+            {
+                Settings = settings;
+                WorkType = workType;
+            }
+        }
+
+        public const int MinimumRecalculationInterval = 250;
+        public const int MaximumRecalculationInterval = 60000;
+
         private static List<WorkTypeDef> legacyNumberKeys;
         private static List<int> legacyNumberValues;
         private static List<WorkTypeDef> legacyPriorityKeys;
@@ -107,10 +122,17 @@ namespace AutoPriority
 
         private readonly Dictionary<int, ColonyCircumstanceSnapshot> lastSnapshots =
             new Dictionary<int, ColonyCircumstanceSnapshot>();
-        private readonly Dictionary<string, List<ScoredPawn>> lastRankings =
-            new Dictionary<string, List<ScoredPawn>>();
+        private readonly Dictionary<int, Dictionary<WorkTypeDef, List<ScoredPawn>>> lastRankings =
+            new Dictionary<int, Dictionary<WorkTypeDef, List<ScoredPawn>>>();
+        private readonly Dictionary<string, WorkTypeSettings> profilesByDefName =
+            new Dictionary<string, WorkTypeSettings>(StringComparer.OrdinalIgnoreCase);
+        private readonly List<ResolvedWorkProfile> enabledProfiles = new List<ResolvedWorkProfile>();
+        private readonly HashSet<CircumstanceType> requiredCircumstances = new HashSet<CircumstanceType>();
+        private static readonly IReadOnlyList<ScoredPawn> EmptyRanking = new List<ScoredPawn>();
 
         private int nextRecalculationTick;
+        private int knownWorkTypeCount = -1;
+        private bool runtimeCacheDirty = true;
 
         public static AutoPrioritySettings Current;
         public bool AutomationEnabled = true;
@@ -127,6 +149,7 @@ namespace AutoPriority
             base.FinalizeInit();
             Current = this;
             EnsureProfiles();
+            RebuildRuntimeCaches();
             nextRecalculationTick = Find.TickManager.TicksGame + 60;
         }
 
@@ -139,7 +162,7 @@ namespace AutoPriority
             }
 
             RecalculateAllMaps();
-            nextRecalculationTick = Find.TickManager.TicksGame + Math.Max(250, RecalculationInterval);
+            nextRecalculationTick = Find.TickManager.TicksGame + RecalculationInterval;
         }
 
         public override void ExposeData()
@@ -156,7 +179,7 @@ namespace AutoPriority
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {
-                RecalculationInterval = Math.Max(250, Math.Min(15000, RecalculationInterval));
+                RecalculationInterval = Math.Max(MinimumRecalculationInterval, Math.Min(MaximumRecalculationInterval, RecalculationInterval));
                 if (Profiles == null)
                 {
                     Profiles = new List<WorkTypeSettings>();
@@ -169,6 +192,7 @@ namespace AutoPriority
                 }
 
                 EnsureProfiles();
+                runtimeCacheDirty = true;
             }
         }
 
@@ -179,34 +203,66 @@ namespace AutoPriority
                 Profiles = new List<WorkTypeSettings>();
             }
 
-            foreach (WorkTypeDef workType in DefDatabase<WorkTypeDef>.AllDefsListForReading)
+            List<WorkTypeDef> workTypes = DefDatabase<WorkTypeDef>.AllDefsListForReading;
+            if (knownWorkTypeCount == workTypes.Count && profilesByDefName.Count > 0)
             {
-                if (Profiles.All(profile => profile.WorkTypeDefName != workType.defName))
-                {
-                    Profiles.Add(new WorkTypeSettings(workType.defName));
-                }
+                return;
             }
 
-            foreach (WorkTypeSettings profile in Profiles)
+            profilesByDefName.Clear();
+            for (int index = 0; index < Profiles.Count; index++)
             {
+                WorkTypeSettings profile = Profiles[index];
+                if (profile == null || profile.WorkTypeDefName.NullOrEmpty() || profilesByDefName.ContainsKey(profile.WorkTypeDefName))
+                {
+                    continue;
+                }
+
                 profile.EnsureValid();
+                profilesByDefName.Add(profile.WorkTypeDefName, profile);
             }
+
+            for (int index = 0; index < workTypes.Count; index++)
+            {
+                WorkTypeDef workType = workTypes[index];
+                if (profilesByDefName.ContainsKey(workType.defName))
+                {
+                    continue;
+                }
+
+                var profile = new WorkTypeSettings(workType.defName);
+                Profiles.Add(profile);
+                profilesByDefName.Add(workType.defName, profile);
+            }
+
+            knownWorkTypeCount = workTypes.Count;
+            runtimeCacheDirty = true;
         }
 
         public WorkTypeSettings ProfileFor(WorkTypeDef workType)
         {
             EnsureProfiles();
-            return Profiles.First(profile => profile.WorkTypeDefName == workType.defName);
+            WorkTypeSettings profile;
+            if (profilesByDefName.TryGetValue(workType.defName, out profile))
+            {
+                return profile;
+            }
+
+            knownWorkTypeCount = -1;
+            EnsureProfiles();
+            return profilesByDefName[workType.defName];
         }
 
         public void NotifySettingsChanged(bool applyImmediately)
         {
             EnsureProfiles();
+            runtimeCacheDirty = true;
+            RebuildRuntimeCaches();
             nextRecalculationTick = Find.TickManager.TicksGame;
             if (applyImmediately && AutomationEnabled)
             {
                 RecalculateAllMaps();
-                nextRecalculationTick = Find.TickManager.TicksGame + Math.Max(250, RecalculationInterval);
+                nextRecalculationTick = Find.TickManager.TicksGame + RecalculationInterval;
             }
         }
 
@@ -224,10 +280,11 @@ namespace AutoPriority
 
         public IReadOnlyList<ScoredPawn> RankingFor(Map map, WorkTypeDef workType)
         {
+            Dictionary<WorkTypeDef, List<ScoredPawn>> mapRankings;
             List<ScoredPawn> ranking;
-            return lastRankings.TryGetValue(RankingKey(map, workType), out ranking)
+            return lastRankings.TryGetValue(map.uniqueID, out mapRankings) && mapRankings.TryGetValue(workType, out ranking)
                 ? ranking
-                : new List<ScoredPawn>();
+                : EmptyRanking;
         }
 
         public void RecalculateAllMaps()
@@ -238,9 +295,17 @@ namespace AutoPriority
             }
 
             EnsureProfiles();
-            EnsureManualPrioritiesEnabled();
-            foreach (Map map in Find.Maps)
+            RebuildRuntimeCaches();
+            if (enabledProfiles.Count == 0)
             {
+                return;
+            }
+
+            EnsureManualPrioritiesEnabled();
+            List<Map> maps = Find.Maps;
+            for (int index = 0; index < maps.Count; index++)
+            {
+                Map map = maps[index];
                 try
                 {
                     RecalculateMap(map);
@@ -254,35 +319,68 @@ namespace AutoPriority
 
         private void RecalculateMap(Map map)
         {
-            List<Pawn> allColonists = map.mapPawns.FreeColonistsSpawned
-                .Where(pawn => pawn != null && !pawn.Dead && pawn.workSettings != null && pawn.workSettings.Initialized)
-                .ToList();
+            List<Pawn> spawned = map.mapPawns.FreeColonistsSpawned;
+            var allColonists = new List<Pawn>(spawned.Count);
+            for (int index = 0; index < spawned.Count; index++)
+            {
+                Pawn pawn = spawned[index];
+                if (pawn != null && !pawn.Dead && pawn.workSettings != null && pawn.workSettings.Initialized)
+                {
+                    allColonists.Add(pawn);
+                }
+            }
+
             if (allColonists.Count == 0)
             {
                 return;
             }
 
-            ColonyCircumstanceSnapshot snapshot = ColonyCircumstanceSnapshot.Capture(map);
+            ColonyCircumstanceSnapshot snapshot = requiredCircumstances.Count == 0
+                ? new ColonyCircumstanceSnapshot()
+                : ColonyCircumstanceSnapshot.Capture(map, requiredCircumstances);
             lastSnapshots[map.uniqueID] = snapshot;
-
-            foreach (WorkTypeSettings profile in Profiles.Where(item => item.Enabled))
+            Dictionary<WorkTypeDef, List<ScoredPawn>> mapRankings;
+            if (!lastRankings.TryGetValue(map.uniqueID, out mapRankings))
             {
-                WorkTypeDef workType = DefDatabase<WorkTypeDef>.GetNamedSilentFail(profile.WorkTypeDefName);
-                if (workType == null)
+                mapRankings = new Dictionary<WorkTypeDef, List<ScoredPawn>>();
+                lastRankings.Add(map.uniqueID, mapRankings);
+            }
+
+            var scoreCache = new WorkScoreCache();
+            var candidates = new List<Pawn>(allColonists.Count);
+            var capableColonists = new List<Pawn>(allColonists.Count);
+            var selected = new HashSet<Pawn>();
+
+            for (int profileIndex = 0; profileIndex < enabledProfiles.Count; profileIndex++)
+            {
+                ResolvedWorkProfile resolved = enabledProfiles[profileIndex];
+                WorkTypeSettings profile = resolved.Settings;
+                WorkTypeDef workType = resolved.WorkType;
+                candidates.Clear();
+                capableColonists.Clear();
+                for (int pawnIndex = 0; pawnIndex < allColonists.Count; pawnIndex++)
                 {
-                    continue;
+                    Pawn pawn = allColonists[pawnIndex];
+                    if (pawn.WorkTypeIsDisabled(workType))
+                    {
+                        continue;
+                    }
+
+                    capableColonists.Add(pawn);
+                    if (!pawn.Downed && !pawn.InMentalState)
+                    {
+                        candidates.Add(pawn);
+                    }
                 }
 
-                List<Pawn> candidates = allColonists
-                    .Where(pawn => !pawn.Downed && !pawn.InMentalState && !pawn.WorkTypeIsDisabled(workType))
-                    .ToList();
-                List<ScoredPawn> ranking = WorkScoring.Rank(workType, candidates);
-                lastRankings[RankingKey(map, workType)] = ranking;
+                List<ScoredPawn> ranking = WorkScoring.Rank(workType, candidates, scoreCache);
+                mapRankings[workType] = ranking;
 
                 int extraWorkers = 0;
                 int priorityBoost = 0;
-                foreach (CircumstanceRule rule in profile.CircumstanceRules)
+                for (int ruleIndex = 0; ruleIndex < profile.CircumstanceRules.Count; ruleIndex++)
                 {
+                    CircumstanceRule rule = profile.CircumstanceRules[ruleIndex];
                     if (rule.Enabled && snapshot.IsActive(rule.Type))
                     {
                         extraWorkers = Math.Max(extraWorkers, rule.ExtraWorkers);
@@ -291,31 +389,62 @@ namespace AutoPriority
                 }
 
                 int selectedCount = Math.Min(ranking.Count, profile.WorkerCount + extraWorkers);
-                var selected = new HashSet<Pawn>();
+                selected.Clear();
                 for (int rank = 0; rank < selectedCount; rank++)
                 {
                     Pawn pawn = ranking[rank].Pawn;
                     selected.Add(pawn);
                     int priority = Math.Max(1, profile.PriorityForRank(rank) - priorityBoost);
-                    SetPriorityIfChanged(pawn, workType, priority);
+                    PriorityCompatibility.SetPriorityIfChanged(pawn, workType, priority);
                 }
 
-                foreach (Pawn pawn in allColonists)
+                for (int pawnIndex = 0; pawnIndex < capableColonists.Count; pawnIndex++)
                 {
-                    if (!selected.Contains(pawn) && !pawn.WorkTypeIsDisabled(workType))
+                    Pawn pawn = capableColonists[pawnIndex];
+                    if (!selected.Contains(pawn))
                     {
-                        SetPriorityIfChanged(pawn, workType, 0);
+                        PriorityCompatibility.SetPriorityIfChanged(pawn, workType, 0);
                     }
                 }
             }
         }
 
-        private static void SetPriorityIfChanged(Pawn pawn, WorkTypeDef workType, int priority)
+        private void RebuildRuntimeCaches()
         {
-            if (pawn.workSettings.GetPriority(workType) != priority)
+            if (!runtimeCacheDirty)
             {
-                pawn.workSettings.SetPriority(workType, priority);
+                return;
             }
+
+            enabledProfiles.Clear();
+            requiredCircumstances.Clear();
+            foreach (WorkTypeSettings profile in profilesByDefName.Values)
+            {
+                if (profile == null || !profile.Enabled || profile.WorkTypeDefName.NullOrEmpty())
+                {
+                    continue;
+                }
+
+                // Missing mod-added work types remain dormant in the save. They are
+                // picked up automatically if their defining mod is loaded again.
+                WorkTypeDef workType = DefDatabase<WorkTypeDef>.GetNamedSilentFail(profile.WorkTypeDefName);
+                if (workType == null)
+                {
+                    continue;
+                }
+
+                enabledProfiles.Add(new ResolvedWorkProfile(profile, workType));
+                for (int ruleIndex = 0; ruleIndex < profile.CircumstanceRules.Count; ruleIndex++)
+                {
+                    CircumstanceRule rule = profile.CircumstanceRules[ruleIndex];
+                    if (rule.Enabled)
+                    {
+                        requiredCircumstances.Add(rule.Type);
+                    }
+                }
+            }
+
+            runtimeCacheDirty = false;
         }
 
         private static void EnsureManualPrioritiesEnabled()
@@ -333,11 +462,6 @@ namespace AutoPriority
                     pawn.workSettings.Notify_UseWorkPrioritiesChanged();
                 }
             }
-        }
-
-        private static string RankingKey(Map map, WorkTypeDef workType)
-        {
-            return map.uniqueID + ":" + workType.defName;
         }
 
         private void ReadLegacySettings()

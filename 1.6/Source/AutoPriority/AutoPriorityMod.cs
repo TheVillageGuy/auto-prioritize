@@ -10,9 +10,12 @@ namespace AutoPriority
     public sealed class AutoPriorityMod : Mod
     {
         private const float NavigationWidth = 190f;
+        private static readonly int[] IntervalPresets = { 250, 600, 1500, 2500, 5000, 10000, 30000, 60000 };
         private Vector2 navigationScroll;
         private Vector2 detailScroll;
         private string selectedWorkTypeDefName;
+        private List<WorkTypeDef> cachedVisibleWorkTypes;
+        private int cachedWorkTypeCount = -1;
 
         public AutoPriorityMod(ModContentPack content) : base(content)
         {
@@ -33,11 +36,7 @@ namespace AutoPriority
 
             AutoPrioritySettings settings = AutoPrioritySettings.Current;
             settings.EnsureProfiles();
-            List<WorkTypeDef> workTypes = DefDatabase<WorkTypeDef>.AllDefsListForReading
-                .Where(workType => workType.visible)
-                .OrderByDescending(workType => workType.naturalPriority)
-                .ThenBy(workType => workType.labelShort)
-                .ToList();
+            List<WorkTypeDef> workTypes = VisibleWorkTypes();
             if (workTypes.Count == 0)
             {
                 Widgets.Label(inRect, "AutoPriority.NoWorkTypes".Translate());
@@ -49,8 +48,8 @@ namespace AutoPriority
                 selectedWorkTypeDefName = workTypes[0].defName;
             }
 
-            bool changed = DrawGlobalControls(inRect.TopPartPixels(58f), settings);
-            Rect body = new Rect(inRect.x, inRect.y + 64f, inRect.width, inRect.height - 64f);
+            bool changed = DrawGlobalControls(inRect.TopPartPixels(88f), settings);
+            Rect body = new Rect(inRect.x, inRect.y + 94f, inRect.width, inRect.height - 94f);
             Rect navigation = new Rect(body.x, body.y, NavigationWidth, body.height);
             Rect detail = new Rect(navigation.xMax + 10f, body.y, body.width - NavigationWidth - 10f, body.height);
 
@@ -86,14 +85,68 @@ namespace AutoPriority
                 changed = true;
             }
 
-            Rect intervalLabel = new Rect(inner.x + 250f, inner.y, 250f, 30f);
-            Widgets.Label(intervalLabel, "AutoPriority.Interval".Translate(settings.RecalculationInterval.ToStringTicksToPeriod()));
             if (Widgets.ButtonText(new Rect(inner.xMax - 130f, inner.y, 120f, 30f), "AutoPriority.ApplyNow".Translate()))
             {
                 settings.NotifySettingsChanged(true);
             }
 
+            int presetIndex = NearestIntervalPreset(settings.RecalculationInterval);
+            Rect intervalLabel = new Rect(inner.x, inner.y + 36f, 255f, 28f);
+            Widgets.Label(intervalLabel, "AutoPriority.Interval".Translate(IntervalPresets[presetIndex].ToStringTicksToPeriod()));
+            Rect intervalSlider = new Rect(intervalLabel.xMax + 8f, intervalLabel.y + 2f, inner.xMax - intervalLabel.xMax - 18f, 24f);
+            int newPresetIndex = Mathf.RoundToInt(Widgets.HorizontalSlider(
+                intervalSlider,
+                presetIndex,
+                0f,
+                IntervalPresets.Length - 1,
+                false,
+                null,
+                "AutoPriority.Interval.Faster".Translate(),
+                "AutoPriority.Interval.Lighter".Translate(),
+                1f));
+            int interval = IntervalPresets[Mathf.Clamp(newPresetIndex, 0, IntervalPresets.Length - 1)];
+            TooltipHandler.TipRegion(intervalSlider, "AutoPriority.Interval.Desc".Translate());
+            if (interval != settings.RecalculationInterval)
+            {
+                settings.RecalculationInterval = interval;
+                changed = true;
+            }
+
             return changed;
+        }
+
+        private List<WorkTypeDef> VisibleWorkTypes()
+        {
+            List<WorkTypeDef> allWorkTypes = DefDatabase<WorkTypeDef>.AllDefsListForReading;
+            if (cachedVisibleWorkTypes != null && cachedWorkTypeCount == allWorkTypes.Count)
+            {
+                return cachedVisibleWorkTypes;
+            }
+
+            cachedVisibleWorkTypes = allWorkTypes
+                .Where(workType => workType.visible)
+                .OrderByDescending(workType => workType.naturalPriority)
+                .ThenBy(workType => workType.labelShort)
+                .ToList();
+            cachedWorkTypeCount = allWorkTypes.Count;
+            return cachedVisibleWorkTypes;
+        }
+
+        private static int NearestIntervalPreset(int interval)
+        {
+            int bestIndex = 0;
+            int bestDistance = Math.Abs(interval - IntervalPresets[0]);
+            for (int index = 1; index < IntervalPresets.Length; index++)
+            {
+                int distance = Math.Abs(interval - IntervalPresets[index]);
+                if (distance < bestDistance)
+                {
+                    bestIndex = index;
+                    bestDistance = distance;
+                }
+            }
+
+            return bestIndex;
         }
 
         private void DrawNavigation(Rect rect, List<WorkTypeDef> workTypes)

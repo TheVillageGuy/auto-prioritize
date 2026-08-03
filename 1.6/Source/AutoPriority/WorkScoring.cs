@@ -78,6 +78,102 @@ namespace AutoPriority
         }
     }
 
+    /// <summary>
+    /// Short-lived cache shared by every work type in one update pass. It prevents
+    /// common stats such as MoveSpeed and WorkSpeedGlobal from being recalculated
+    /// repeatedly, but is deliberately discarded after the pass so health,
+    /// equipment, genes and hediff changes are observed on the next update.
+    /// </summary>
+    public sealed class WorkScoreCache
+    {
+        private struct CachedStatValue
+        {
+            public readonly float Value;
+            public readonly bool Disabled;
+
+            public CachedStatValue(float value, bool disabled)
+            {
+                Value = value;
+                Disabled = disabled;
+            }
+        }
+
+        private readonly Dictionary<Pawn, Dictionary<StatDef, CachedStatValue>> statValues =
+            new Dictionary<Pawn, Dictionary<StatDef, CachedStatValue>>();
+        private readonly Dictionary<Pawn, Dictionary<WorkTypeDef, float>> skillValues =
+            new Dictionary<Pawn, Dictionary<WorkTypeDef, float>>();
+        private readonly Dictionary<Pawn, Dictionary<WorkTypeDef, float>> passionValues =
+            new Dictionary<Pawn, Dictionary<WorkTypeDef, float>>();
+
+        public float StatValue(Pawn pawn, StatDef stat, bool lowerIsBetter)
+        {
+            Dictionary<StatDef, CachedStatValue> values;
+            if (!statValues.TryGetValue(pawn, out values))
+            {
+                values = new Dictionary<StatDef, CachedStatValue>();
+                statValues.Add(pawn, values);
+            }
+
+            CachedStatValue cached;
+            if (!values.TryGetValue(stat, out cached))
+            {
+                bool disabled = stat.Worker.IsDisabledFor(pawn);
+                float value = disabled ? 0f : pawn.GetStatValue(stat);
+                if (float.IsNaN(value) || float.IsInfinity(value))
+                {
+                    value = 0f;
+                }
+
+                cached = new CachedStatValue(value, disabled);
+                values.Add(stat, cached);
+            }
+
+            return cached.Disabled
+                ? (lowerIsBetter ? 1000000000f : 0f)
+                : cached.Value;
+        }
+
+        public float SkillValue(Pawn pawn, WorkTypeDef workType)
+        {
+            Dictionary<WorkTypeDef, float> values = WorkValues(skillValues, pawn);
+            float value;
+            if (!values.TryGetValue(workType, out value))
+            {
+                value = pawn.skills == null ? 0f : pawn.skills.AverageOfRelevantSkillsFor(workType);
+                values.Add(workType, value);
+            }
+
+            return value;
+        }
+
+        public float PassionValue(Pawn pawn, WorkTypeDef workType)
+        {
+            Dictionary<WorkTypeDef, float> values = WorkValues(passionValues, pawn);
+            float value;
+            if (!values.TryGetValue(workType, out value))
+            {
+                value = pawn.skills == null ? 0f : (float)pawn.skills.MaxPassionOfRelevantSkillsFor(workType);
+                values.Add(workType, value);
+            }
+
+            return value;
+        }
+
+        private static Dictionary<WorkTypeDef, float> WorkValues(
+            Dictionary<Pawn, Dictionary<WorkTypeDef, float>> cache,
+            Pawn pawn)
+        {
+            Dictionary<WorkTypeDef, float> values;
+            if (!cache.TryGetValue(pawn, out values))
+            {
+                values = new Dictionary<WorkTypeDef, float>();
+                cache.Add(pawn, values);
+            }
+
+            return values;
+        }
+    }
+
     public static class WorkScoring
     {
         private static readonly Dictionary<string, IReadOnlyList<ScoreFactor>> ResolvedCatalog =
@@ -135,7 +231,7 @@ namespace AutoPriority
             return resolved;
         }
 
-        public static List<ScoredPawn> Rank(WorkTypeDef workType, List<Pawn> pawns)
+        public static List<ScoredPawn> Rank(WorkTypeDef workType, List<Pawn> pawns, WorkScoreCache cache)
         {
             IReadOnlyList<ScoreFactor> factors = FactorsFor(workType);
             if (pawns.Count == 0)
@@ -148,7 +244,7 @@ namespace AutoPriority
             {
                 for (int factorIndex = 0; factorIndex < factors.Count; factorIndex++)
                 {
-                    raw[pawnIndex, factorIndex] = RawValue(pawns[pawnIndex], workType, factors[factorIndex]);
+                    raw[pawnIndex, factorIndex] = RawValue(pawns[pawnIndex], workType, factors[factorIndex], cache);
                 }
             }
 
@@ -192,23 +288,33 @@ namespace AutoPriority
                 scores.Add(new ScoredPawn(pawns[pawnIndex], score * 100f));
             }
 
-            return scores
-                .OrderByDescending(item => item.Score)
-                .ThenByDescending(item => item.Pawn.skills == null ? 0f : item.Pawn.skills.AverageOfRelevantSkillsFor(workType))
-                .ThenBy(item => item.Pawn.thingIDNumber)
-                .ToList();
+            scores.Sort(delegate(ScoredPawn left, ScoredPawn right)
+            {
+                int scoreComparison = right.Score.CompareTo(left.Score);
+                if (scoreComparison != 0)
+                {
+                    return scoreComparison;
+                }
+
+                int skillComparison = cache.SkillValue(right.Pawn, workType)
+                    .CompareTo(cache.SkillValue(left.Pawn, workType));
+                return skillComparison != 0
+                    ? skillComparison
+                    : left.Pawn.thingIDNumber.CompareTo(right.Pawn.thingIDNumber);
+            });
+            return scores;
         }
 
-        private static float RawValue(Pawn pawn, WorkTypeDef workType, ScoreFactor factor)
+        private static float RawValue(Pawn pawn, WorkTypeDef workType, ScoreFactor factor, WorkScoreCache cache)
         {
             if (factor.Kind == ScoreFactorKind.RelevantSkill)
             {
-                return pawn.skills == null ? 0f : pawn.skills.AverageOfRelevantSkillsFor(workType);
+                return cache.SkillValue(pawn, workType);
             }
 
             if (factor.Kind == ScoreFactorKind.RelevantPassion)
             {
-                return pawn.skills == null ? 0f : (float)pawn.skills.MaxPassionOfRelevantSkillsFor(workType);
+                return cache.PassionValue(pawn, workType);
             }
 
             StatDef stat = factor.Stat;
@@ -217,13 +323,7 @@ namespace AutoPriority
                 return 0f;
             }
 
-            if (stat.Worker.IsDisabledFor(pawn))
-            {
-                return factor.LowerIsBetter ? 1000000000f : 0f;
-            }
-
-            float value = pawn.GetStatValue(stat);
-            return float.IsNaN(value) || float.IsInfinity(value) ? 0f : value;
+            return cache.StatValue(pawn, stat, factor.LowerIsBetter);
         }
 
         private static bool IsAvailable(ScoreFactor factor)
