@@ -236,6 +236,194 @@ namespace AutoPriority
 
     public static class WorkScoring
     {
+        public sealed class IncrementalRanker
+        {
+            private WorkTypeDef workType;
+            private List<Pawn> pawns;
+            private WorkScoreCache cache;
+            private List<ScoredPawn> scores;
+            private IReadOnlyList<ScoreFactor> factors;
+            private float[] raw;
+            private float[] minimums;
+            private float[] maximums;
+            private float totalWeight;
+            private int pawnIndex;
+            private int phase;
+            private int heapBuildIndex;
+            private int heapEnd;
+
+            public bool Complete { get; private set; }
+
+            public void Begin(
+                WorkTypeDef newWorkType,
+                List<Pawn> newPawns,
+                WorkScoreCache newCache,
+                List<ScoredPawn> newScores)
+            {
+                workType = newWorkType;
+                pawns = newPawns;
+                cache = newCache;
+                scores = newScores;
+                scores.Clear();
+                factors = FactorsFor(workType);
+                pawnIndex = 0;
+                phase = 0;
+                Complete = pawns.Count == 0 || factors.Count == 0;
+                if (Complete)
+                {
+                    return;
+                }
+
+                cache.GetBuffers(pawns.Count * factors.Count, factors.Count, out raw, out minimums, out maximums);
+                totalWeight = 0f;
+                for (int factorIndex = 0; factorIndex < factors.Count; factorIndex++)
+                {
+                    minimums[factorIndex] = float.MaxValue;
+                    maximums[factorIndex] = float.MinValue;
+                    totalWeight += factors[factorIndex].Weight;
+                }
+
+                if (scores.Capacity < pawns.Count)
+                {
+                    scores.Capacity = pawns.Count;
+                }
+            }
+
+            // Processes one pawn at a time so the caller can enforce a time budget.
+            public void Step()
+            {
+                if (Complete)
+                {
+                    return;
+                }
+
+                if (phase == 2)
+                {
+                    StepSort();
+                    return;
+                }
+
+                if (phase == 0)
+                {
+                    Pawn pawn = pawns[pawnIndex];
+                    for (int factorIndex = 0; factorIndex < factors.Count; factorIndex++)
+                    {
+                        int rawIndex = pawnIndex * factors.Count + factorIndex;
+                        float value = RawValue(pawn, workType, factors[factorIndex], cache);
+                        raw[rawIndex] = value;
+                        minimums[factorIndex] = Math.Min(minimums[factorIndex], value);
+                        maximums[factorIndex] = Math.Max(maximums[factorIndex], value);
+                    }
+
+                    pawnIndex++;
+                    if (pawnIndex >= pawns.Count)
+                    {
+                        pawnIndex = 0;
+                        phase = 1;
+                    }
+
+                    return;
+                }
+
+                float score = 0f;
+                for (int factorIndex = 0; factorIndex < factors.Count; factorIndex++)
+                {
+                    float min = minimums[factorIndex];
+                    float max = maximums[factorIndex];
+                    float normalized = max - min < 0.0001f
+                        ? 0.5f
+                        : Mathf.InverseLerp(min, max, raw[pawnIndex * factors.Count + factorIndex]);
+                    if (factors[factorIndex].LowerIsBetter)
+                    {
+                        normalized = 1f - normalized;
+                    }
+
+                    score += normalized * factors[factorIndex].Weight;
+                }
+
+                if (totalWeight > 0f)
+                {
+                    score /= totalWeight;
+                }
+
+                scores.Add(new ScoredPawn(pawns[pawnIndex], score * 100f));
+                pawnIndex++;
+                if (pawnIndex < pawns.Count)
+                {
+                    return;
+                }
+
+                phase = 2;
+                heapBuildIndex = scores.Count / 2 - 1;
+                heapEnd = scores.Count - 1;
+            }
+
+            private void StepSort()
+            {
+                if (heapBuildIndex >= 0)
+                {
+                    SiftDownMinHeap(heapBuildIndex, scores.Count);
+                    heapBuildIndex--;
+                    return;
+                }
+
+                if (heapEnd > 0)
+                {
+                    ScoredPawn root = scores[0];
+                    scores[0] = scores[heapEnd];
+                    scores[heapEnd] = root;
+                    SiftDownMinHeap(0, heapEnd);
+                    heapEnd--;
+                    return;
+                }
+
+                Complete = true;
+            }
+
+            private void SiftDownMinHeap(int root, int count)
+            {
+                while (true)
+                {
+                    int child = root * 2 + 1;
+                    if (child >= count)
+                    {
+                        return;
+                    }
+
+                    int right = child + 1;
+                    if (right < count && CompareQuality(scores[right], scores[child]) < 0)
+                    {
+                        child = right;
+                    }
+
+                    if (CompareQuality(scores[child], scores[root]) >= 0)
+                    {
+                        return;
+                    }
+
+                    ScoredPawn swap = scores[root];
+                    scores[root] = scores[child];
+                    scores[child] = swap;
+                    root = child;
+                }
+            }
+
+            private int CompareQuality(ScoredPawn left, ScoredPawn right)
+            {
+                int scoreComparison = left.Score.CompareTo(right.Score);
+                if (scoreComparison != 0)
+                {
+                    return scoreComparison;
+                }
+
+                int skillComparison = cache.SkillValue(left.Pawn, workType)
+                    .CompareTo(cache.SkillValue(right.Pawn, workType));
+                return skillComparison != 0
+                    ? skillComparison
+                    : right.Pawn.thingIDNumber.CompareTo(left.Pawn.thingIDNumber);
+            }
+        }
+
         private static readonly Dictionary<string, IReadOnlyList<ScoreFactor>> ResolvedCatalog =
             new Dictionary<string, IReadOnlyList<ScoreFactor>>(StringComparer.OrdinalIgnoreCase);
 

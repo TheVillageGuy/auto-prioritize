@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
+using HarmonyLib;
 using RimWorld;
 using UnityEngine;
 using Verse;
@@ -12,6 +14,7 @@ namespace AutoPriority
         private const float NavigationWidth = 190f;
         private const string LeftoversTab = "__leftoverColonists";
         private static readonly int[] IntervalPresets = { 250, 600, 1500, 2500, 5000, 10000, 30000, 60000 };
+        private static bool harmonyInitialized;
         private Vector2 navigationScroll;
         private Vector2 detailScroll;
         private string selectedWorkTypeDefName;
@@ -20,6 +23,11 @@ namespace AutoPriority
 
         public AutoPriorityMod(ModContentPack content) : base(content)
         {
+            if (!harmonyInitialized)
+            {
+                new Harmony("TheVillageGuy.LetMeSkillForYou").PatchAll(Assembly.GetExecutingAssembly());
+                harmonyInitialized = true;
+            }
         }
 
         public override string SettingsCategory()
@@ -121,7 +129,12 @@ namespace AutoPriority
                 changed = true;
             }
 
-            if (settings.PendingAssignmentTotal > 0)
+            if (settings.IsCalculating)
+            {
+                Widgets.Label(new Rect(inner.x, inner.y + 62f, inner.width, 24f),
+                    "AutoPriority.Calculating".Translate());
+            }
+            else if (settings.PendingAssignmentTotal > 0)
             {
                 int applied = settings.PendingAssignmentTotal - settings.PendingAssignmentCount;
                 Widgets.Label(new Rect(inner.x, inner.y + 62f, inner.width, 24f),

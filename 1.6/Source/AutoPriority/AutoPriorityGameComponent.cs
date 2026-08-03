@@ -216,6 +216,9 @@ namespace AutoPriority
         private readonly List<PendingPawnAssignment> pendingAssignments = new List<PendingPawnAssignment>();
         private readonly List<PendingPawnAssignment> pendingAssignmentPool = new List<PendingPawnAssignment>();
         private readonly Stopwatch assignmentStopwatch = new Stopwatch();
+        private readonly Stopwatch calculationStopwatch = new Stopwatch();
+        private readonly WorkScoring.IncrementalRanker incrementalRanker = new WorkScoring.IncrementalRanker();
+        private IEnumerator<bool> calculationEnumerator;
 
         private int nextRecalculationTick;
         private int nextPendingAssignmentIndex;
@@ -249,7 +252,14 @@ namespace AutoPriority
             base.GameComponentTick();
             if (!AutomationEnabled)
             {
+                CancelCalculation();
                 ClearPendingAssignments();
+                return;
+            }
+
+            if (calculationEnumerator != null)
+            {
+                ProcessCalculationForTick();
                 return;
             }
 
@@ -407,6 +417,7 @@ namespace AutoPriority
 
         public void NotifySettingsChanged(bool applyImmediately)
         {
+            CancelCalculation();
             ClearPendingAssignments();
             EnsureProfiles();
             runtimeCacheDirty = true;
@@ -425,6 +436,16 @@ namespace AutoPriority
         public int PendingAssignmentTotal
         {
             get { return pendingAssignmentTotal; }
+        }
+
+        public bool IsCalculating
+        {
+            get { return calculationEnumerator != null; }
+        }
+
+        public bool IsAdjusting
+        {
+            get { return calculationEnumerator == null && nextPendingAssignmentIndex < pendingAssignments.Count; }
         }
 
         public ColonyCircumstanceSnapshot SnapshotFor(Map map)
@@ -465,30 +486,24 @@ namespace AutoPriority
             }
 
             EnsureManualPrioritiesEnabled();
+            CancelCalculation();
             BeginAssignmentPlan();
-            try
+            calculationEnumerator = CalculateAllMapsIncrementally().GetEnumerator();
+        }
+
+        private IEnumerable<bool> CalculateAllMapsIncrementally()
+        {
+            List<Map> maps = Find.Maps;
+            for (int index = 0; index < maps.Count; index++)
             {
-                List<Map> maps = Find.Maps;
-                for (int index = 0; index < maps.Count; index++)
+                foreach (bool step in CalculateMapIncrementally(maps[index]))
                 {
-                    Map map = maps[index];
-                    try
-                    {
-                        RecalculateMap(map);
-                    }
-                    catch (Exception exception)
-                    {
-                        Log.Error("[Let Me Skill For You] Failed to calculate work priorities on " + map + ": " + exception);
-                    }
+                    yield return step;
                 }
-            }
-            finally
-            {
-                FinishAssignmentPlan();
             }
         }
 
-        private void RecalculateMap(Map map)
+        private IEnumerable<bool> CalculateMapIncrementally(Map map)
         {
             List<Pawn> spawned = map.mapPawns.FreeColonistsSpawned;
             allColonists.Clear();
@@ -499,11 +514,13 @@ namespace AutoPriority
                 {
                     allColonists.Add(pawn);
                 }
+
+                yield return true;
             }
 
             if (allColonists.Count == 0)
             {
-                return;
+                yield break;
             }
 
             ColonyCircumstanceSnapshot snapshot = requiredCircumstances.Count == 0
@@ -544,6 +561,8 @@ namespace AutoPriority
                     {
                         candidates.Add(pawn);
                     }
+
+                    yield return true;
                 }
 
                 List<ScoredPawn> ranking;
@@ -553,7 +572,12 @@ namespace AutoPriority
                     mapRankings.Add(workType, ranking);
                 }
 
-                WorkScoring.Rank(workType, candidates, scoreCache, ranking);
+                incrementalRanker.Begin(workType, candidates, scoreCache, ranking);
+                while (!incrementalRanker.Complete)
+                {
+                    incrementalRanker.Step();
+                    yield return true;
+                }
 
                 int extraWorkers = 0;
                 int priorityBoost = 0;
@@ -591,6 +615,7 @@ namespace AutoPriority
                         assignedColonists.Add(pawn);
                         QueuePriority(pawn, workType, priority);
                         rank++;
+                        yield return true;
                     }
                 }
 
@@ -601,6 +626,8 @@ namespace AutoPriority
                     {
                         QueuePriority(pawn, workType, 0);
                     }
+
+                    yield return true;
                 }
 
                 HashSet<Pawn> primaryWorkers;
@@ -615,11 +642,14 @@ namespace AutoPriority
 
             if (ManageLeftoverColonists)
             {
-                ApplyLeftoverWork(allColonists, assignedColonists, primaryAssignments);
+                foreach (bool step in PlanLeftoverWork(allColonists, assignedColonists, primaryAssignments))
+                {
+                    yield return step;
+                }
             }
         }
 
-        private void ApplyLeftoverWork(
+        private IEnumerable<bool> PlanLeftoverWork(
             List<Pawn> allColonists,
             HashSet<Pawn> assignedColonists,
             Dictionary<WorkTypeDef, HashSet<Pawn>> primaryAssignments)
@@ -635,6 +665,7 @@ namespace AutoPriority
                     Pawn pawn = allColonists[pawnIndex];
                     if (pawn.WorkTypeIsDisabled(fallback.WorkType))
                     {
+                        yield return true;
                         continue;
                     }
 
@@ -642,13 +673,60 @@ namespace AutoPriority
                     // as a primary worker for the same work type.
                     if (primaryWorkers != null && primaryWorkers.Contains(pawn))
                     {
+                        yield return true;
                         continue;
                     }
 
                     int priority = assignedColonists.Contains(pawn) ? 0 : fallback.Settings.Priority;
                     QueuePriority(pawn, fallback.WorkType, priority);
+                    yield return true;
                 }
             }
+        }
+
+        private void ProcessCalculationForTick()
+        {
+            calculationStopwatch.Reset();
+            calculationStopwatch.Start();
+            int processedThisTick = 0;
+            try
+            {
+                while (calculationEnumerator != null &&
+                       (processedThisTick == 0 || calculationStopwatch.Elapsed.TotalMilliseconds < AssignmentBudgetMilliseconds))
+                {
+                    if (!calculationEnumerator.MoveNext())
+                    {
+                        calculationEnumerator.Dispose();
+                        calculationEnumerator = null;
+                        FinishAssignmentPlan();
+                        break;
+                    }
+
+                    processedThisTick++;
+                }
+            }
+            catch (Exception exception)
+            {
+                Log.Error("[Let Me Skill For You] Failed while calculating work priorities: " + exception);
+                CancelCalculation();
+                ClearPendingAssignments();
+                nextRecalculationTick = Find.TickManager.TicksGame + RecalculationInterval;
+            }
+            finally
+            {
+                calculationStopwatch.Stop();
+            }
+        }
+
+        private void CancelCalculation()
+        {
+            if (calculationEnumerator == null)
+            {
+                return;
+            }
+
+            calculationEnumerator.Dispose();
+            calculationEnumerator = null;
         }
 
         private void BeginAssignmentPlan()

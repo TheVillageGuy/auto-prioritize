@@ -58,6 +58,7 @@
     <Compile Include="AutoPriorityGameComponent.cs" />
     <Compile Include="ColonyCircumstances.cs" />
     <Compile Include="PriorityCompatibility.cs" />
+    <Compile Include="WorkButtonStatus.cs" />
     <Compile Include="WorkScoring.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
