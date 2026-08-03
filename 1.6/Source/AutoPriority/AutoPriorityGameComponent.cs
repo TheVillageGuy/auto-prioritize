@@ -76,11 +76,6 @@ namespace AutoPriority
             WorkerCount = RankGroupCounts[0] + RankGroupCounts[1];
         }
 
-        public int PriorityForRank(int zeroBasedRank)
-        {
-            return zeroBasedRank < RankGroupCounts[0] ? RankPriorities[0] : RankPriorities[1];
-        }
-
         public void ExposeData()
         {
             Scribe_Values.Look(ref WorkTypeDefName, "workTypeDefName");
@@ -520,18 +515,30 @@ namespace AutoPriority
                     }
                 }
 
-                int selectedCount = Math.Min(ranking.Count, profile.WorkerCount + extraWorkers);
                 selected.Clear();
-                for (int rank = 0; rank < selectedCount; rank++)
+                int rank = 0;
+                for (int groupIndex = 0; groupIndex < 2 && rank < ranking.Count; groupIndex++)
                 {
-                    Pawn pawn = ranking[rank].Pawn;
-                    selected.Add(pawn);
-                    assignedColonists.Add(pawn);
-                    int configuredPriority = profile.PriorityForRank(rank);
+                    int groupCount = profile.RankGroupCounts[groupIndex];
+                    if (groupIndex == 1)
+                    {
+                        // Circumstance-added workers follow rank group 2's priority.
+                        groupCount += extraWorkers;
+                    }
+
+                    int configuredPriority = profile.RankPriorities[groupIndex];
                     int priority = configuredPriority == 0
                         ? 0
                         : Math.Max(1, configuredPriority - priorityBoost);
-                    PriorityCompatibility.SetPriorityIfChanged(pawn, workType, priority);
+                    int groupEnd = Math.Min(ranking.Count, rank + groupCount);
+                    while (rank < groupEnd)
+                    {
+                        Pawn pawn = ranking[rank].Pawn;
+                        selected.Add(pawn);
+                        assignedColonists.Add(pawn);
+                        PriorityCompatibility.SetPriorityIfChanged(pawn, workType, priority);
+                        rank++;
+                    }
                 }
 
                 for (int pawnIndex = 0; pawnIndex < capableColonists.Count; pawnIndex++)
