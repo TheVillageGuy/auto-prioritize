@@ -97,6 +97,49 @@ namespace AutoPriority
         }
     }
 
+    public sealed class LeftoverWorkSetting : IExposable
+    {
+        public string WorkTypeDefName;
+        public bool Enabled;
+        public int Priority = 3;
+
+        public LeftoverWorkSetting()
+        {
+        }
+
+        public LeftoverWorkSetting(string workTypeDefName)
+        {
+            WorkTypeDefName = workTypeDefName;
+            Priority = DefaultPriority(workTypeDefName);
+        }
+
+        public void EnsureValid()
+        {
+            Priority = Math.Max(1, Math.Min(4, Priority));
+        }
+
+        public void ExposeData()
+        {
+            Scribe_Values.Look(ref WorkTypeDefName, "workTypeDefName");
+            Scribe_Values.Look(ref Enabled, "enabled", false);
+            Scribe_Values.Look(ref Priority, "priority", 3);
+            EnsureValid();
+        }
+
+        private static int DefaultPriority(string defName)
+        {
+            switch (defName)
+            {
+                case "Firefighter":
+                case "Patient":
+                case "PatientBedRest":
+                    return 1;
+                default:
+                    return 3;
+            }
+        }
+    }
+
     // The class name is kept for compatibility with saves made by the older releases.
     public sealed class AutoPrioritySettings : GameComponent
     {
@@ -106,6 +149,18 @@ namespace AutoPriority
             public readonly WorkTypeDef WorkType;
 
             public ResolvedWorkProfile(WorkTypeSettings settings, WorkTypeDef workType)
+            {
+                Settings = settings;
+                WorkType = workType;
+            }
+        }
+
+        private sealed class ResolvedLeftoverWork
+        {
+            public readonly LeftoverWorkSetting Settings;
+            public readonly WorkTypeDef WorkType;
+
+            public ResolvedLeftoverWork(LeftoverWorkSetting settings, WorkTypeDef workType)
             {
                 Settings = settings;
                 WorkType = workType;
@@ -126,7 +181,10 @@ namespace AutoPriority
             new Dictionary<int, Dictionary<WorkTypeDef, List<ScoredPawn>>>();
         private readonly Dictionary<string, WorkTypeSettings> profilesByDefName =
             new Dictionary<string, WorkTypeSettings>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, LeftoverWorkSetting> leftoverProfilesByDefName =
+            new Dictionary<string, LeftoverWorkSetting>(StringComparer.OrdinalIgnoreCase);
         private readonly List<ResolvedWorkProfile> enabledProfiles = new List<ResolvedWorkProfile>();
+        private readonly List<ResolvedLeftoverWork> enabledLeftoverWorkTypes = new List<ResolvedLeftoverWork>();
         private readonly HashSet<CircumstanceType> requiredCircumstances = new HashSet<CircumstanceType>();
         private static readonly IReadOnlyList<ScoredPawn> EmptyRanking = new List<ScoredPawn>();
 
@@ -138,6 +196,8 @@ namespace AutoPriority
         public bool AutomationEnabled = true;
         public int RecalculationInterval = 2500;
         public List<WorkTypeSettings> Profiles = new List<WorkTypeSettings>();
+        public bool ManageLeftoverColonists;
+        public List<LeftoverWorkSetting> LeftoverWorkTypes = new List<LeftoverWorkSetting>();
 
         public AutoPrioritySettings(Game game)
         {
@@ -171,6 +231,8 @@ namespace AutoPriority
             Scribe_Values.Look(ref AutomationEnabled, "automationEnabled", true);
             Scribe_Values.Look(ref RecalculationInterval, "recalculationInterval", 2500);
             Scribe_Collections.Look(ref Profiles, "workProfiles", LookMode.Deep);
+            Scribe_Values.Look(ref ManageLeftoverColonists, "manageLeftoverColonists", false);
+            Scribe_Collections.Look(ref LeftoverWorkTypes, "leftoverWorkTypes", LookMode.Deep);
 
             if (Scribe.mode == LoadSaveMode.LoadingVars && Profiles.NullOrEmpty())
             {
@@ -185,8 +247,19 @@ namespace AutoPriority
                     Profiles = new List<WorkTypeSettings>();
                 }
 
+                if (LeftoverWorkTypes == null)
+                {
+                    LeftoverWorkTypes = new List<LeftoverWorkSetting>();
+                }
+
                 Profiles.RemoveAll(profile => profile == null || profile.WorkTypeDefName.NullOrEmpty());
                 foreach (WorkTypeSettings profile in Profiles)
+                {
+                    profile.EnsureValid();
+                }
+
+                LeftoverWorkTypes.RemoveAll(profile => profile == null || profile.WorkTypeDefName.NullOrEmpty());
+                foreach (LeftoverWorkSetting profile in LeftoverWorkTypes)
                 {
                     profile.EnsureValid();
                 }
@@ -203,13 +276,19 @@ namespace AutoPriority
                 Profiles = new List<WorkTypeSettings>();
             }
 
+            if (LeftoverWorkTypes == null)
+            {
+                LeftoverWorkTypes = new List<LeftoverWorkSetting>();
+            }
+
             List<WorkTypeDef> workTypes = DefDatabase<WorkTypeDef>.AllDefsListForReading;
-            if (knownWorkTypeCount == workTypes.Count && profilesByDefName.Count > 0)
+            if (knownWorkTypeCount == workTypes.Count && profilesByDefName.Count > 0 && leftoverProfilesByDefName.Count > 0)
             {
                 return;
             }
 
             profilesByDefName.Clear();
+            leftoverProfilesByDefName.Clear();
             for (int index = 0; index < Profiles.Count; index++)
             {
                 WorkTypeSettings profile = Profiles[index];
@@ -222,17 +301,34 @@ namespace AutoPriority
                 profilesByDefName.Add(profile.WorkTypeDefName, profile);
             }
 
-            for (int index = 0; index < workTypes.Count; index++)
+            for (int index = 0; index < LeftoverWorkTypes.Count; index++)
             {
-                WorkTypeDef workType = workTypes[index];
-                if (profilesByDefName.ContainsKey(workType.defName))
+                LeftoverWorkSetting profile = LeftoverWorkTypes[index];
+                if (profile == null || profile.WorkTypeDefName.NullOrEmpty() || leftoverProfilesByDefName.ContainsKey(profile.WorkTypeDefName))
                 {
                     continue;
                 }
 
-                var profile = new WorkTypeSettings(workType.defName);
-                Profiles.Add(profile);
-                profilesByDefName.Add(workType.defName, profile);
+                profile.EnsureValid();
+                leftoverProfilesByDefName.Add(profile.WorkTypeDefName, profile);
+            }
+
+            for (int index = 0; index < workTypes.Count; index++)
+            {
+                WorkTypeDef workType = workTypes[index];
+                if (!profilesByDefName.ContainsKey(workType.defName))
+                {
+                    var profile = new WorkTypeSettings(workType.defName);
+                    Profiles.Add(profile);
+                    profilesByDefName.Add(workType.defName, profile);
+                }
+
+                if (!leftoverProfilesByDefName.ContainsKey(workType.defName))
+                {
+                    var leftoverProfile = new LeftoverWorkSetting(workType.defName);
+                    LeftoverWorkTypes.Add(leftoverProfile);
+                    leftoverProfilesByDefName.Add(workType.defName, leftoverProfile);
+                }
             }
 
             knownWorkTypeCount = workTypes.Count;
@@ -251,6 +347,20 @@ namespace AutoPriority
             knownWorkTypeCount = -1;
             EnsureProfiles();
             return profilesByDefName[workType.defName];
+        }
+
+        public LeftoverWorkSetting LeftoverProfileFor(WorkTypeDef workType)
+        {
+            EnsureProfiles();
+            LeftoverWorkSetting profile;
+            if (leftoverProfilesByDefName.TryGetValue(workType.defName, out profile))
+            {
+                return profile;
+            }
+
+            knownWorkTypeCount = -1;
+            EnsureProfiles();
+            return leftoverProfilesByDefName[workType.defName];
         }
 
         public void NotifySettingsChanged(bool applyImmediately)
@@ -296,7 +406,7 @@ namespace AutoPriority
 
             EnsureProfiles();
             RebuildRuntimeCaches();
-            if (enabledProfiles.Count == 0)
+            if (enabledProfiles.Count == 0 && (!ManageLeftoverColonists || enabledLeftoverWorkTypes.Count == 0))
             {
                 return;
             }
@@ -350,6 +460,8 @@ namespace AutoPriority
             var candidates = new List<Pawn>(allColonists.Count);
             var capableColonists = new List<Pawn>(allColonists.Count);
             var selected = new HashSet<Pawn>();
+            var assignedColonists = new HashSet<Pawn>();
+            var primaryAssignments = new Dictionary<WorkTypeDef, HashSet<Pawn>>();
 
             for (int profileIndex = 0; profileIndex < enabledProfiles.Count; profileIndex++)
             {
@@ -394,6 +506,7 @@ namespace AutoPriority
                 {
                     Pawn pawn = ranking[rank].Pawn;
                     selected.Add(pawn);
+                    assignedColonists.Add(pawn);
                     int priority = Math.Max(1, profile.PriorityForRank(rank) - priorityBoost);
                     PriorityCompatibility.SetPriorityIfChanged(pawn, workType, priority);
                 }
@@ -406,6 +519,45 @@ namespace AutoPriority
                         PriorityCompatibility.SetPriorityIfChanged(pawn, workType, 0);
                     }
                 }
+
+                primaryAssignments[workType] = new HashSet<Pawn>(selected);
+            }
+
+            if (ManageLeftoverColonists)
+            {
+                ApplyLeftoverWork(allColonists, assignedColonists, primaryAssignments);
+            }
+        }
+
+        private void ApplyLeftoverWork(
+            List<Pawn> allColonists,
+            HashSet<Pawn> assignedColonists,
+            Dictionary<WorkTypeDef, HashSet<Pawn>> primaryAssignments)
+        {
+            for (int workIndex = 0; workIndex < enabledLeftoverWorkTypes.Count; workIndex++)
+            {
+                ResolvedLeftoverWork fallback = enabledLeftoverWorkTypes[workIndex];
+                HashSet<Pawn> primaryWorkers;
+                primaryAssignments.TryGetValue(fallback.WorkType, out primaryWorkers);
+
+                for (int pawnIndex = 0; pawnIndex < allColonists.Count; pawnIndex++)
+                {
+                    Pawn pawn = allColonists[pawnIndex];
+                    if (pawn.WorkTypeIsDisabled(fallback.WorkType))
+                    {
+                        continue;
+                    }
+
+                    // Keep the rank-specific priority when this pawn was selected
+                    // as a primary worker for the same work type.
+                    if (primaryWorkers != null && primaryWorkers.Contains(pawn))
+                    {
+                        continue;
+                    }
+
+                    int priority = assignedColonists.Contains(pawn) ? 0 : fallback.Settings.Priority;
+                    PriorityCompatibility.SetPriorityIfChanged(pawn, fallback.WorkType, priority);
+                }
             }
         }
 
@@ -417,6 +569,7 @@ namespace AutoPriority
             }
 
             enabledProfiles.Clear();
+            enabledLeftoverWorkTypes.Clear();
             requiredCircumstances.Clear();
             foreach (WorkTypeSettings profile in profilesByDefName.Values)
             {
@@ -440,6 +593,23 @@ namespace AutoPriority
                     if (rule.Enabled)
                     {
                         requiredCircumstances.Add(rule.Type);
+                    }
+                }
+            }
+
+            if (ManageLeftoverColonists)
+            {
+                foreach (LeftoverWorkSetting profile in leftoverProfilesByDefName.Values)
+                {
+                    if (profile == null || !profile.Enabled || profile.WorkTypeDefName.NullOrEmpty())
+                    {
+                        continue;
+                    }
+
+                    WorkTypeDef workType = DefDatabase<WorkTypeDef>.GetNamedSilentFail(profile.WorkTypeDefName);
+                    if (workType != null)
+                    {
+                        enabledLeftoverWorkTypes.Add(new ResolvedLeftoverWork(profile, workType));
                     }
                 }
             }

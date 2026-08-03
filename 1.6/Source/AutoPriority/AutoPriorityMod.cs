@@ -10,6 +10,7 @@ namespace AutoPriority
     public sealed class AutoPriorityMod : Mod
     {
         private const float NavigationWidth = 190f;
+        private const string LeftoversTab = "__leftoverColonists";
         private static readonly int[] IntervalPresets = { 250, 600, 1500, 2500, 5000, 10000, 30000, 60000 };
         private Vector2 navigationScroll;
         private Vector2 detailScroll;
@@ -43,7 +44,8 @@ namespace AutoPriority
                 return;
             }
 
-            if (selectedWorkTypeDefName.NullOrEmpty() || workTypes.All(workType => workType.defName != selectedWorkTypeDefName))
+            if (selectedWorkTypeDefName.NullOrEmpty() ||
+                (selectedWorkTypeDefName != LeftoversTab && workTypes.All(workType => workType.defName != selectedWorkTypeDefName)))
             {
                 selectedWorkTypeDefName = workTypes[0].defName;
             }
@@ -54,8 +56,15 @@ namespace AutoPriority
             Rect detail = new Rect(navigation.xMax + 10f, body.y, body.width - NavigationWidth - 10f, body.height);
 
             changed |= DrawNavigation(navigation, settings, workTypes);
-            WorkTypeDef selected = workTypes.First(workType => workType.defName == selectedWorkTypeDefName);
-            changed |= DrawProfile(detail, settings, selected);
+            if (selectedWorkTypeDefName == LeftoversTab)
+            {
+                changed |= DrawLeftoverProfile(detail, settings, workTypes);
+            }
+            else
+            {
+                WorkTypeDef selected = workTypes.First(workType => workType.defName == selectedWorkTypeDefName);
+                changed |= DrawProfile(detail, settings, selected);
+            }
 
             if (changed)
             {
@@ -154,12 +163,43 @@ namespace AutoPriority
             bool changed = false;
             Widgets.DrawMenuSection(rect);
             Rect outRect = rect.ContractedBy(2f);
-            Rect viewRect = new Rect(0f, 0f, outRect.width - 18f, workTypes.Count * 34f + 4f);
+            Rect viewRect = new Rect(0f, 0f, outRect.width - 18f, (workTypes.Count + 1) * 34f + 4f);
             Widgets.BeginScrollView(outRect, ref navigationScroll, viewRect);
+
+            Rect leftoverRow = new Rect(0f, 0f, viewRect.width, 32f);
+            if (selectedWorkTypeDefName == LeftoversTab)
+            {
+                Widgets.DrawHighlightSelected(leftoverRow);
+            }
+            else if (Mouse.IsOver(leftoverRow))
+            {
+                Widgets.DrawHighlight(leftoverRow);
+            }
+
+            Rect leftoverCheckboxRect = new Rect(leftoverRow.xMax - 29f, leftoverRow.y + 5f, 24f, 24f);
+            bool manageLeftovers = settings.ManageLeftoverColonists;
+            Widgets.Checkbox(leftoverCheckboxRect.position, ref manageLeftovers, 24f);
+            TooltipHandler.TipRegion(leftoverCheckboxRect, "AutoPriority.Leftovers.Manage.Desc".Translate());
+            if (manageLeftovers != settings.ManageLeftoverColonists)
+            {
+                settings.ManageLeftoverColonists = manageLeftovers;
+                changed = true;
+            }
+
+            Rect leftoverSelectRect = new Rect(leftoverRow.x, leftoverRow.y, leftoverRow.width - 34f, leftoverRow.height);
+            Widgets.Label(new Rect(leftoverRow.x + 7f, leftoverRow.y + 4f, leftoverRow.width - 43f, leftoverRow.height - 8f),
+                "AutoPriority.Leftovers.Tab".Translate());
+            if (Widgets.ButtonInvisible(leftoverSelectRect))
+            {
+                selectedWorkTypeDefName = LeftoversTab;
+                detailScroll = Vector2.zero;
+            }
+            TooltipHandler.TipRegion(leftoverSelectRect, "AutoPriority.Leftovers.Desc".Translate());
+
             for (int index = 0; index < workTypes.Count; index++)
             {
                 WorkTypeDef workType = workTypes[index];
-                Rect row = new Rect(0f, index * 34f, viewRect.width, 32f);
+                Rect row = new Rect(0f, (index + 1) * 34f, viewRect.width, 32f);
                 if (selectedWorkTypeDefName == workType.defName)
                 {
                     Widgets.DrawHighlightSelected(row);
@@ -192,6 +232,92 @@ namespace AutoPriority
                 TooltipHandler.TipRegion(selectRect, workType.description);
             }
 
+            Widgets.EndScrollView();
+            return changed;
+        }
+
+        private bool DrawLeftoverProfile(Rect rect, AutoPrioritySettings settings, List<WorkTypeDef> workTypes)
+        {
+            Widgets.DrawMenuSection(rect);
+            float contentHeight = 225f + workTypes.Count * 76f;
+            Rect outRect = rect.ContractedBy(8f);
+            Rect viewRect = new Rect(0f, 0f, outRect.width - 18f, contentHeight);
+            Widgets.BeginScrollView(outRect, ref detailScroll, viewRect);
+            var listing = new Listing_Standard();
+            listing.Begin(viewRect);
+
+            Text.Font = GameFont.Medium;
+            listing.Label("AutoPriority.Leftovers.Title".Translate());
+            Text.Font = GameFont.Small;
+            listing.Label("AutoPriority.Leftovers.Desc".Translate());
+            listing.GapLine();
+
+            bool changed = false;
+            bool manage = settings.ManageLeftoverColonists;
+            listing.CheckboxLabeled("AutoPriority.Leftovers.Manage".Translate(), ref manage,
+                "AutoPriority.Leftovers.Manage.Desc".Translate());
+            if (manage != settings.ManageLeftoverColonists)
+            {
+                settings.ManageLeftoverColonists = manage;
+                changed = true;
+            }
+
+            listing.Gap();
+            listing.Label("AutoPriority.Leftovers.WorkTypes".Translate());
+            listing.Label("AutoPriority.Leftovers.WorkTypes.Desc".Translate());
+            listing.Gap();
+
+            for (int index = 0; index < workTypes.Count; index++)
+            {
+                WorkTypeDef workType = workTypes[index];
+                LeftoverWorkSetting fallback = settings.LeftoverProfileFor(workType);
+                bool enabled = fallback.Enabled;
+                string label = workType.pawnLabel.NullOrEmpty()
+                    ? workType.LabelCap.ToString()
+                    : workType.pawnLabel.CapitalizeFirst();
+                listing.CheckboxLabeled(label, ref enabled, workType.description);
+                if (enabled != fallback.Enabled)
+                {
+                    fallback.Enabled = enabled;
+                    changed = true;
+                }
+
+                if (fallback.Enabled)
+                {
+                    int priority = Mathf.RoundToInt(listing.SliderLabeled(
+                        "AutoPriority.Leftovers.Priority".Translate(fallback.Priority), fallback.Priority, 1f, 4f));
+                    if (priority != fallback.Priority)
+                    {
+                        fallback.Priority = priority;
+                        changed = true;
+                    }
+                }
+                else
+                {
+                    listing.Gap(24f);
+                }
+
+                listing.Gap(4f);
+            }
+
+            listing.GapLine();
+            Rect buttons = listing.GetRect(34f);
+            if (Widgets.ButtonText(buttons.LeftPart(0.48f), "AutoPriority.Leftovers.Clear".Translate()))
+            {
+                settings.ManageLeftoverColonists = false;
+                for (int index = 0; index < settings.LeftoverWorkTypes.Count; index++)
+                {
+                    settings.LeftoverWorkTypes[index].Enabled = false;
+                }
+                changed = true;
+            }
+
+            if (Widgets.ButtonText(buttons.RightPart(0.48f), "AutoPriority.ApplyNow".Translate()))
+            {
+                settings.NotifySettingsChanged(true);
+            }
+
+            listing.End();
             Widgets.EndScrollView();
             return changed;
         }

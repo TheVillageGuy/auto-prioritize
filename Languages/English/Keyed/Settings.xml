@@ -34,6 +34,16 @@
     <AutoPriority.NoRanking>Apply the settings to calculate a current ranking.</AutoPriority.NoRanking>
     <AutoPriority.ResetWorkType>Reset this work type</AutoPriority.ResetWorkType>
 
+    <AutoPriority.Leftovers.Tab>Leftover colonists</AutoPriority.Leftovers.Tab>
+    <AutoPriority.Leftovers.Title>Leftover colonists</AutoPriority.Leftovers.Title>
+    <AutoPriority.Leftovers.Desc>A colonist is left over when they were not selected for any managed work type. Give these colonists basic or fallback work so they remain useful instead of becoming idle.</AutoPriority.Leftovers.Desc>
+    <AutoPriority.Leftovers.Manage>Assign work to leftover colonists</AutoPriority.Leftovers.Manage>
+    <AutoPriority.Leftovers.Manage.Desc>When enabled, this mod controls the selected fallback work types for colonists without a ranked assignment.</AutoPriority.Leftovers.Manage.Desc>
+    <AutoPriority.Leftovers.WorkTypes>Basic and fallback work types</AutoPriority.Leftovers.WorkTypes>
+    <AutoPriority.Leftovers.WorkTypes.Desc>Select every work type leftover colonists should perform and choose its priority. Priority 1 is highest and priority 4 is lowest.</AutoPriority.Leftovers.WorkTypes.Desc>
+    <AutoPriority.Leftovers.Priority>Fallback priority: {0}</AutoPriority.Leftovers.Priority>
+    <AutoPriority.Leftovers.Clear>Clear fallback settings</AutoPriority.Leftovers.Clear>
+
     <AutoPriority.Circumstance.Medical>Patients need treatment</AutoPriority.Circumstance.Medical>
     <AutoPriority.Circumstance.Medical.Desc>Active while a colonist or colony prisoner has a condition needing treatment.</AutoPriority.Circumstance.Medical.Desc>
     <AutoPriority.Circumstance.Fire>Fire on the map</AutoPriority.Circumstance.Fire>
