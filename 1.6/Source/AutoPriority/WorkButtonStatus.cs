@@ -37,24 +37,25 @@ namespace AutoPriority
     [HarmonyPatch(typeof(MainButtonWorker), nameof(MainButtonWorker.DoButton))]
     public static class WorkButtonRightClickPatch
     {
-        public static void Postfix(MainButtonWorker __instance, Rect rect)
+        public static bool Prefix(MainButtonWorker __instance, Rect rect)
         {
             Event currentEvent = Event.current;
             if (__instance.def == null || __instance.def.defName != "Work" ||
                 currentEvent == null || currentEvent.type != EventType.MouseDown ||
                 currentEvent.button != 1 || !Mouse.IsOver(rect))
             {
-                return;
+                return true;
             }
 
             AutoPriorityMod mod = LoadedModManager.GetMod<AutoPriorityMod>();
             if (mod == null)
             {
-                return;
+                return true;
             }
 
             currentEvent.Use();
             Find.WindowStack.Add(new Dialog_ModSettings(mod));
+            return false;
         }
     }
 }
