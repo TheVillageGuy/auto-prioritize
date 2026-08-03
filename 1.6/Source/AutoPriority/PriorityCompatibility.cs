@@ -20,45 +20,41 @@ namespace AutoPriority
         private static readonly ScheduledPrioritySetter WorkTabSetter;
         private static readonly ScheduledPriorityGetter WorkTabGetter;
         private static readonly MaximumPriorityGetter WorkTabMaximumPriority;
+        private static readonly FieldInfo WorkTabMaximumPriorityField;
 
         static PriorityCompatibility()
         {
-            Type extensions = FindType("WorkTab.Pawn_Extensions");
-            if (extensions == null)
-            {
-                return;
-            }
-
             try
             {
-                MethodInfo setter = extensions.GetMethod(
-                    "SetPriority",
-                    BindingFlags.Public | BindingFlags.Static,
-                    null,
-                    new[] { typeof(Pawn), typeof(WorkTypeDef), typeof(int), typeof(List<int>) },
-                    null);
-                MethodInfo getter = extensions.GetMethod(
-                    "GetPriority",
-                    BindingFlags.Public | BindingFlags.Static,
-                    null,
-                    new[] { typeof(Pawn), typeof(WorkTypeDef), typeof(int) },
-                    null);
-
-                Type settings = FindType("WorkTab.Settings");
-                PropertyInfo maximumPriority = settings == null
-                    ? null
-                    : settings.GetProperty("MaxPriority", BindingFlags.Public | BindingFlags.Static);
-
-                if (setter != null && getter != null)
+                MethodInfo setter;
+                MethodInfo getter;
+                Type settings;
+                if (!TryFindScheduledPriorityApi(out setter, out getter, out settings))
                 {
-                    WorkTabSetter = (ScheduledPrioritySetter)Delegate.CreateDelegate(typeof(ScheduledPrioritySetter), setter);
-                    WorkTabGetter = (ScheduledPriorityGetter)Delegate.CreateDelegate(typeof(ScheduledPriorityGetter), getter);
+                    return;
                 }
 
-                if (maximumPriority != null && maximumPriority.GetGetMethod() != null)
+                WorkTabSetter = (ScheduledPrioritySetter)Delegate.CreateDelegate(typeof(ScheduledPrioritySetter), setter);
+                WorkTabGetter = (ScheduledPriorityGetter)Delegate.CreateDelegate(typeof(ScheduledPriorityGetter), getter);
+
+                if (settings != null)
                 {
-                    WorkTabMaximumPriority = (MaximumPriorityGetter)Delegate.CreateDelegate(
-                        typeof(MaximumPriorityGetter), maximumPriority.GetGetMethod());
+                    const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
+                    PropertyInfo maximumPriority = settings.GetProperty("MaxPriority", flags);
+                    MethodInfo maximumGetter = maximumPriority == null ? null : maximumPriority.GetGetMethod(true);
+                    if (maximumGetter != null && maximumGetter.ReturnType == typeof(int))
+                    {
+                        WorkTabMaximumPriority = (MaximumPriorityGetter)Delegate.CreateDelegate(
+                            typeof(MaximumPriorityGetter), maximumGetter);
+                    }
+                    else
+                    {
+                        FieldInfo maximumField = settings.GetField("maxPriority", flags) ?? settings.GetField("MaxPriority", flags);
+                        if (maximumField != null && maximumField.FieldType == typeof(int))
+                        {
+                            WorkTabMaximumPriorityField = maximumField;
+                        }
+                    }
                 }
             }
             catch (Exception exception)
@@ -71,12 +67,21 @@ namespace AutoPriority
         {
             get
             {
-                if (WorkTabMaximumPriority == null)
+                int maximum;
+                if (WorkTabMaximumPriority != null)
                 {
-                    return 4;
+                    maximum = WorkTabMaximumPriority();
+                }
+                else if (WorkTabMaximumPriorityField != null)
+                {
+                    maximum = (int)WorkTabMaximumPriorityField.GetValue(null);
+                }
+                else
+                {
+                    maximum = 4;
                 }
 
-                return Math.Max(4, Math.Min(99, WorkTabMaximumPriority()));
+                return Math.Max(4, Math.Min(99, maximum));
             }
         }
 
@@ -101,19 +106,114 @@ namespace AutoPriority
             }
         }
 
-        private static Type FindType(string fullName)
+        private static bool TryFindScheduledPriorityApi(
+            out MethodInfo setter,
+            out MethodInfo getter,
+            out Type settings)
         {
+            setter = null;
+            getter = null;
+            settings = null;
             Assembly[] assemblies = AppDomain.CurrentDomain.GetAssemblies();
+
+            // Prefer the original API name, then fall back to matching the shared
+            // method and settings signatures used by Work Tab forks.
             for (int index = 0; index < assemblies.Length; index++)
             {
-                Type type = assemblies[index].GetType(fullName, false);
-                if (type != null)
+                Type extensions = assemblies[index].GetType("WorkTab.Pawn_Extensions", false);
+                if (extensions != null && TryGetPriorityMethods(extensions, out setter, out getter))
                 {
-                    return type;
+                    settings = FindSettingsType(assemblies[index], extensions.Namespace);
+                    return true;
                 }
             }
 
-            return null;
+            for (int assemblyIndex = 0; assemblyIndex < assemblies.Length; assemblyIndex++)
+            {
+                Type[] types = LoadableTypes(assemblies[assemblyIndex]);
+                for (int typeIndex = 0; typeIndex < types.Length; typeIndex++)
+                {
+                    Type extensions = types[typeIndex];
+                    if (extensions == null || !extensions.IsAbstract || !extensions.IsSealed ||
+                        !TryGetPriorityMethods(extensions, out setter, out getter))
+                    {
+                        continue;
+                    }
+
+                    settings = FindSettingsType(assemblies[assemblyIndex], extensions.Namespace);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryGetPriorityMethods(Type extensions, out MethodInfo setter, out MethodInfo getter)
+        {
+            const BindingFlags flags = BindingFlags.Public | BindingFlags.Static;
+            setter = extensions.GetMethod(
+                "SetPriority", flags, null,
+                new[] { typeof(Pawn), typeof(WorkTypeDef), typeof(int), typeof(List<int>) }, null);
+            getter = extensions.GetMethod(
+                "GetPriority", flags, null,
+                new[] { typeof(Pawn), typeof(WorkTypeDef), typeof(int) }, null);
+            return setter != null && setter.ReturnType == typeof(void) &&
+                   getter != null && getter.ReturnType == typeof(int);
+        }
+
+        private static Type FindSettingsType(Assembly assembly, string preferredNamespace)
+        {
+            Type[] types = LoadableTypes(assembly);
+            Type fallback = null;
+            for (int index = 0; index < types.Length; index++)
+            {
+                Type type = types[index];
+                if (type == null || !HasMaximumPriorityMember(type))
+                {
+                    continue;
+                }
+
+                if (type.Namespace == preferredNamespace && type.Name == "Settings")
+                {
+                    return type;
+                }
+
+                if (type.Namespace == preferredNamespace || fallback == null)
+                {
+                    fallback = type;
+                }
+            }
+
+            return fallback;
+        }
+
+        private static bool HasMaximumPriorityMember(Type type)
+        {
+            const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
+            PropertyInfo property = type.GetProperty("MaxPriority", flags);
+            if (property != null && property.PropertyType == typeof(int))
+            {
+                return true;
+            }
+
+            FieldInfo field = type.GetField("maxPriority", flags) ?? type.GetField("MaxPriority", flags);
+            return field != null && field.FieldType == typeof(int);
+        }
+
+        private static Type[] LoadableTypes(Assembly assembly)
+        {
+            try
+            {
+                return assembly.GetTypes();
+            }
+            catch (ReflectionTypeLoadException exception)
+            {
+                return exception.Types;
+            }
+            catch
+            {
+                return new Type[0];
+            }
         }
     }
 }
