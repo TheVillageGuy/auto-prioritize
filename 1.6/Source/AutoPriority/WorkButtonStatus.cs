@@ -1,5 +1,6 @@
 using HarmonyLib;
 using RimWorld;
+using UnityEngine;
 using Verse;
 
 namespace AutoPriority
@@ -30,6 +31,30 @@ namespace AutoPriority
             {
                 __result = "AutoPriority.WorkButton.Adjusting".Translate();
             }
+        }
+    }
+
+    [HarmonyPatch(typeof(MainButtonWorker), nameof(MainButtonWorker.DoButton))]
+    public static class WorkButtonRightClickPatch
+    {
+        public static void Postfix(MainButtonWorker __instance, Rect rect)
+        {
+            Event currentEvent = Event.current;
+            if (__instance.def == null || __instance.def.defName != "Work" ||
+                currentEvent == null || currentEvent.type != EventType.MouseDown ||
+                currentEvent.button != 1 || !Mouse.IsOver(rect))
+            {
+                return;
+            }
+
+            AutoPriorityMod mod = LoadedModManager.GetMod<AutoPriorityMod>();
+            if (mod == null)
+            {
+                return;
+            }
+
+            currentEvent.Use();
+            Find.WindowStack.Add(new Dialog_ModSettings(mod));
         }
     }
 }
